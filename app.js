@@ -100,12 +100,37 @@ function syncStatus() {
   if (syncError) return "Letzter Abruf fehlgeschlagen. " + esc(syncError);
   return data.sync ? "Letzter erfolgreicher Reonic-Import " + date(data.sync.synced_at) + " · " + data.sync.user_count + " Benutzer" : "Reonic wurde noch nicht erfolgreich synchronisiert.";
 }
+const berlinDay = value => new Intl.DateTimeFormat("sv-SE",{timeZone:"Europe/Berlin",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(value));
+function weekStart(value) {
+  const day = new Date(berlinDay(value) + "T00:00:00Z");
+  day.setUTCDate(day.getUTCDate() - (day.getUTCDay()+6)%7);
+  return day.toISOString().slice(0,10);
+}
+function confirmed(a) {
+  return Boolean(a.reonic_synced_at || !data.leads.find(l => l.id === a.lead_id)?.reonic_project_id);
+}
+function weeklySummary() {
+  const week = weekStart(Date.now());
+  const current = data.assignments.filter(a => confirmed(a) && weekStart(a.reonic_synced_at || a.assigned_at) === week);
+  const activeOrders = data.orders.filter(o => o.order_type === "weekly" && ["open","in_progress"].includes(o.status));
+  const ids = new Set([...activeOrders.map(o => o.supplier_id),...current.map(a => a.supplier_id || data.orders.find(o => o.id === a.order_id)?.supplier_id)]);
+  const rows = [...ids].map(id => {
+    const orders = activeOrders.filter(o => o.supplier_id === id);
+    const qty = orders.reduce((sum,o) => sum+(o.quantity ?? 0),0);
+    const assigned = current.filter(a => (a.supplier_id || data.orders.find(o => o.id === a.order_id)?.supplier_id) === id).length;
+    return "<tr><td>" + esc(id ? supplierFor(id) : "Ohne Lead-Anbieter") + "</td><td>" +
+      qty + (orders.some(o => o.quantity == null) ? " + offene Mengen" : "") + "</td><td>" + assigned + "</td></tr>";
+  });
+  return panel('<h2>Lead-Anbieter · Woche ab ' + esc(week.split("-").reverse().join(".")) +
+    '</h2><div class="table-wrap"><table><thead><tr><th>Lead-Anbieter</th><th>Bestellt pro Woche</th><th>Diese Woche zugewiesen</th></tr></thead><tbody>' +
+    rows.join("") + '</tbody></table></div>');
+}
 function dashboard() {
   const metrics = [["Leads", data.leads.length], ["Aktive Verkäufer", data.partners.filter(p => p.active && p.reonic_present).length],
     ["Zuweisungen", data.assignments.length], ["Bestellungen", data.orders.length]];
   return '<div class="stats">' + metrics.map(([name, count]) =>
     '<div class="stat"><div class="muted">' + name + '</div><strong>' + count + '</strong></div>').join("") +
-    '</div>' + panel('<h2>Verbindungen</h2><p>Supabase verbunden</p><p>' + syncStatus() + '</p>');
+    '</div>' + weeklySummary() + panel('<h2>Verbindungen</h2><p>Supabase verbunden</p><p>' + syncStatus() + '</p>');
 }
 
 let leadTab = "open";
@@ -314,7 +339,7 @@ async function save(action, values, id) {
         await reonicRequests({action:"assign",lead_id:id,...values});
         return;
       }
-      result = await client.from("lead_assignments").insert({lead_id:id,partner_id:values.partner_id,order_id:optional(values.order_id),manual:values.manual === "true"});
+      result = await client.from("lead_assignments").insert({lead_id:id,partner_id:values.partner_id,order_id:optional(values.order_id),supplier_id:optional(values.supplier_id),manual:values.manual === "true"});
       if (result.error?.code === "23505") throw Error("Dieser Lead ist bereits zugewiesen. Bitte aktualisieren.");
       break;
     default: throw Error("Unbekannte Aktion.");
@@ -342,7 +367,7 @@ async function advanceQuick(delta = 0) {
 }
 function manualPartnerForm(lead) {
   const partners = data.partners.filter(p => p.active && p.reonic_present &&
-    (!lead.reonic_project_id || (p.reonic_user_id && data.teams.some(t => t.id === p.reonic_team_id && t.active))))
+    (!lead.reonic_project_id || (p.reonic_user_id && (p.reonic_team_optional || data.teams.some(t => t.id === p.reonic_team_id && t.active && t.leader_ids.length)))))
     .sort((a,b) => a.full_name.localeCompare(b.full_name,"de"));
   if (!partners.length) return '<div class="focus-other"><h3>Vertriebspartner manuell auswählen</h3><p>Schalte zuerst einen Vertriebspartner frei' +
     (lead.reonic_project_id ? ' und hinterlege sein Reonic-Team' : '') + '.</p></div>';
@@ -350,7 +375,7 @@ function manualPartnerForm(lead) {
     '<input type="hidden" name="manual" value="true">' +
     input("Name oder PLZ suchen","partner_search","",'type="search" autocomplete="off" data-manual-search') +
     select("Vertriebspartner","partner_id",[["","Bitte wählen"],...partners.map(p =>
-      [p.id,p.full_name + " · " + (p.postal_code || p.reonic_postal_code || "PLZ fehlt")])],""),
+      [p.id,p.full_name + " · " + (p.postal_code || p.reonic_postal_code || "PLZ fehlt")])],"") + assignmentChoice(lead,""),
     "Manuell zuweisen",lead.id) + '</div>';
 }
 async function byDrivingDistance(lead, candidates) {
@@ -393,6 +418,36 @@ async function byDrivingDistance(lead, candidates) {
   }).sort((a,b) => a.driveKm-b.driveKm || b.priority-a.priority || a.partner_id.localeCompare(b.partner_id));
   return {ranked:ranked.slice(0,10),unavailable:candidates.length-ranked.length};
 }
+function sourceForLead(lead) {
+  const normalize = value => (value || "").toLowerCase().replace(/[^a-z0-9]/g,"");
+  const key = normalize(lead.source?.split(" · ").at(-1));
+  return data.suppliers.find(s => s.active && normalize(s.name) === key)?.id || "";
+}
+function assignmentChoice(lead, partnerId) {
+  const source = sourceForLead(lead);
+  return select("Lead-Anbieter","supplier_id",[["","Bitte wählen"],...data.suppliers.filter(s => s.active).map(s => [s.id,s.name])],source) +
+    select("Bestellung","order_id",orderOptions(partnerId,source),"");
+}
+function orderOptions(partner,source) {
+  return [["","Ohne Bestellung"],...data.orders.filter(o => o.partner_id === partner && o.supplier_id === source &&
+    ["open","in_progress"].includes(o.status)).map(o => [o.id,
+    (o.quantity == null ? "Menge offen" : o.quantity + (o.order_type === "weekly" ? " pro Woche" : " einmalig")) +
+    " · " + (o.postal_codes_only ? "Hinterlegte PLZ" : o.radius_km != null ? o.radius_km + " km Luftlinie" : o.max_drive_minutes + " Min. Fahrzeit")])];
+}
+function bindOrderChoices(target) {
+  for (const form of target.querySelectorAll('form[data-action="assign"]')) {
+    const {supplier_id:source,partner_id:partner,order_id:order} = form.elements;
+    source.required = true;
+    const update = () => {
+      const choices = orderOptions(partner.value,source.value);
+      const selected = choices.length === 2 ? choices[1][0] : "";
+      order.innerHTML = options(choices,selected);
+    };
+    source.addEventListener("change", update);
+    partner.addEventListener("change", update);
+    update();
+  }
+}
 async function suggest(id, quick = false) {
   const lead = data.leads.find(l => l.id === id);
   if (!lead) return;
@@ -425,18 +480,17 @@ async function suggest(id, quick = false) {
         '</div><h3>Vertriebspartner direkt zuweisen</h3>' : "");
     target.innerHTML = heading + (
       ranked.length ? '<div class="' + (quick ? 'focus-suggestions' : 'suggest-cards') + '">' + ranked.map((p,index) => {
-        const available = data.orders.filter(o => o.partner_id === p.partner_id && ["open","in_progress"].includes(o.status));
         const seller = data.partners.find(s => s.id === p.partner_id);
         const team = data.teams.find(t => t.id === seller?.reonic_team_id && t.active);
-        const needsTeam = Boolean(lead.reonic_project_id && (!team || !seller?.reonic_user_id));
-        const choice = select("Bestellung", "order_id", [["","Ohne Bestellung"], ...available.map(o => [o.id,
-          date(o.created_at) + " · " + supplierFor(o.supplier_id) + " · " + (orderStatuses[o.status] || o.status)])], "");
+        const needsTeam = Boolean(lead.reonic_project_id && (!seller?.reonic_user_id || (!seller.reonic_team_optional && !team?.leader_ids.length)));
+        const choice = assignmentChoice(lead,p.partner_id);
         return (quick ? '<section class="record"><strong>' : '<details class="record"><summary>') + (index+1) + ". " + esc(p.full_name) + " · " +
           p.distance_km.toLocaleString("de-DE",{maximumFractionDigits:2}) + " km Luftlinie · " + p.driveKm.toLocaleString("de-DE",{maximumFractionDigits:1}) +
           " km Fahrtweg · ca. " + Math.round(p.driveMinutes) + " Min. Fahrzeit · Priorität " + p.priority + (quick ? '</strong>' : '</summary>') +
-          (lead.reonic_project_id ? "<p>" + (team ? "Reonic-Team: " + esc(team.name) : "Bitte beim Berater zuerst ein Reonic-Team auswählen.") + "</p>" : "") +
+          (lead.reonic_project_id ? "<p>" + (team ? "Reonic-Team: " + esc(team.name) : seller?.reonic_team_optional ? "Zuweisung ohne Team" : "Bitte beim Berater zuerst ein Reonic-Team auswählen.") + "</p>" : "") +
           (needsTeam ? "" : fields("assign", '<input type="hidden" name="partner_id" value="' + esc(p.partner_id) + '">' + choice, "Verbindlich zuweisen",id)) + (quick ? '</section>' : '</details>');
       }).join("") + "</div>" : "<p>Keine passenden Verkäufer gefunden. Prüfe Freigabe, Standort-PLZ und Einsatzradien.</p>") + (unavailable ? "<p>Für " + unavailable + " geeignete Vertriebspartner war kein Fahrtweg abrufbar.</p>" : "") + manualPartnerForm(lead);
+    bindOrderChoices(target);
     const manual = target.querySelector('[data-manual-search]');
     if (manual) {
       const partnerSelect = manual.form.elements.partner_id;
