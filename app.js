@@ -113,7 +113,7 @@ function leads() {
     input("Telefon", "phone", "", 'type="tel"') + input("Lead-Anbieter", "source") + input("Notizen", "notes"), "Lead speichern")) +
     panel('<h2>Alle Leads</h2><div class="controls">' + search("Name, PLZ, Anbieter oder Kontakt") +
     '<select id="lead-status" aria-label="Status filtern">' +
-    options([["", "Alle Status"], ["reonic", "Reonic · Ohne Status"], ...Object.entries(statuses)], filter.status) + '</select>' + btn("Reonic-Anfragen und Teams laden", 'data-command="requests"') + '</div><div id="records"></div>');
+    options([["", "Alle Status"], ["reonic", "Reonic · Ohne Status"], ["reonic-new", "Reonic · Neue Anfragen"], ...Object.entries(statuses)], filter.status) + '</select>' + btn("Reonic-Anfragen und Teams laden", 'data-command="requests"') + '</div><div id="records"></div>');
 }
 function partners() {
   return panel('<h2>Verkäufer verwalten</h2><div class="controls">' + search("Name, PLZ, Kontakt oder Reonic-ID") +
@@ -154,11 +154,17 @@ const nameFor = id => data.partners.find(p => p.id === id)?.full_name || "—";
 const supplierFor = id => data.suppliers.find(s => s.id === id)?.name || "—";
 const matches = (...parts) => parts.join(" ").toLocaleLowerCase("de").includes(filter[view].trim().toLocaleLowerCase("de"));
 
+function matchesLeadStatus(lead) {
+  if (!filter.status) return true;
+  if (filter.status !== "reonic" && filter.status !== "reonic-new") return lead.status === filter.status;
+  if (!lead.reonic_project_id || !lead.reonic_queue_open || lead.status !== "new") return false;
+  return filter.status === "reonic-new" ? lead.source?.startsWith("Reonic · Neue Anfragen · ") : lead.source === "Reonic · Ohne Status";
+}
 function renderRecords() {
   if (!$("records")) return;
   const lists = {
     leads: () => [...data.leads].sort((a,b) => b.created_at.localeCompare(a.created_at)).filter(l =>
-      (!filter.status || (filter.status === "reonic" ? l.reonic_project_id && l.reonic_queue_open && l.status === "new" : l.status === filter.status)) && matches(l.customer_name, l.postal_code, l.source, l.email, l.phone)).map(leadRecord),
+      matchesLeadStatus(l) && matches(l.customer_name, l.postal_code, l.source, l.email, l.phone)).map(leadRecord),
     partners: () => [...data.partners].sort((a,b) => a.full_name.localeCompare(b.full_name, "de")).filter(p =>
       matches(p.full_name, p.postal_code, p.reonic_postal_code, p.email, p.phone, p.reonic_user_id)).map(partnerRecord),
     orders: () => [...data.orders].sort((a,b) => b.created_at.localeCompare(a.created_at)).filter(o =>
@@ -187,7 +193,7 @@ function leadRecord(l) {
     (order ? ' · Bestellung vom ' + date(order.created_at) : '') + '</p>' +
     fields("leadStatus", select("Status", "status", Object.entries(statuses).slice(1),l.status), "Status speichern", l.id) :
     l.reonic_project_id && !l.reonic_queue_open ? "<p>Diese Anfrage ist in Reonic nicht mehr in der offenen Warteschlange.</p>" : btn("Verkäufer vorschlagen", 'data-command="suggest" data-id="' + esc(l.id) + '"');
-  return record(esc(l.customer_name) + " · " + esc(l.postal_code || "PLZ fehlt") + " · " + esc(pending ? "Reonic-Übertragung ausstehend" : l.reonic_project_id && !a ? (l.reonic_queue_open ? "Reonic · Ohne Status" : "Reonic · Nicht mehr offen") : statuses[l.status]), meta + actions + historyFor("leads",l.id,statuses));
+  return record(esc(l.customer_name) + " · " + esc(l.postal_code || "PLZ fehlt") + " · " + esc(pending ? "Reonic-Übertragung ausstehend" : l.reonic_project_id && !a ? (l.reonic_queue_open ? l.source : "Reonic · Nicht mehr offen") : statuses[l.status]), meta + actions + historyFor("leads",l.id,statuses));
 }
 function partnerRecord(p) {
   const zip = p.postal_code || p.reonic_postal_code;
