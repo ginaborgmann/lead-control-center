@@ -424,13 +424,17 @@ async function byDrivingDistance(lead, candidates) {
 }
 function sourceForLead(lead) {
   const normalize = value => (value || "").toLowerCase().replace(/[^a-z0-9]/g,"");
+  if (lead.reonic_source_id) return data.suppliers.find(s => s.active && s.reonic_source_id === lead.reonic_source_id)?.id || "";
   const key = normalize(lead.source?.split(" · ").at(-1));
   return data.suppliers.find(s => s.active && normalize(s.name) === key)?.id || "";
 }
 function assignmentChoice(lead, partnerId) {
   const source = sourceForLead(lead);
-  return select("Lead-Anbieter","supplier_id",[["","Bitte wählen"],...data.suppliers.filter(s => s.active).map(s => [s.id,s.name])],source) +
-    select("Bestellung","order_id",orderOptions(partnerId,source),"");
+  const sourceField = source
+    ? '<input type="hidden" name="supplier_id" value="' + esc(source) + '"><p>Lead-Anbieter: ' + esc(supplierFor(source)) + '</p>'
+    : select("Lead-Anbieter","supplier_id",[["","Bitte wählen"],...data.suppliers.filter(s => s.active).map(s => [s.id,s.name])],"");
+  return sourceField + '<div data-order-choice>' +
+    select("Bestellung","order_id",orderOptions(partnerId,source),"") + '</div>';
 }
 function orderOptions(partner,source) {
   return [["","Ohne Bestellung"],...data.orders.filter(o => o.partner_id === partner && o.supplier_id === source &&
@@ -445,7 +449,17 @@ function bindOrderChoices(target) {
     const update = () => {
       const choices = orderOptions(partner.value,source.value);
       const selected = choices.length === 2 ? choices[1][0] : "";
+      const area = form.querySelector("[data-order-choice]");
       order.innerHTML = options(choices,selected);
+      const automatic = Boolean(source.value && partner.value && choices.length <= 2);
+      order.closest("label").hidden = automatic;
+      area.querySelector("[data-order-summary]")?.remove();
+      if (automatic) {
+        const summary = document.createElement("p");
+        summary.dataset.orderSummary = "";
+        summary.textContent = selected ? "Bestellung: " + choices[1][1] : "Keine offene Bestellung für diese Quelle.";
+        area.append(summary);
+      }
     };
     source.addEventListener("change", update);
     partner.addEventListener("change", update);
@@ -492,7 +506,7 @@ async function suggest(id, quick = false) {
           p.distance_km.toLocaleString("de-DE",{maximumFractionDigits:2}) + " km Luftlinie · " + p.driveKm.toLocaleString("de-DE",{maximumFractionDigits:1}) +
           " km Fahrtweg · ca. " + Math.round(p.driveMinutes) + " Min. Fahrzeit · Priorität " + p.priority + (quick ? '</strong>' : '</summary>') +
           (lead.reonic_project_id ? "<p>" + (team ? "Reonic-Team: " + esc(team.name) : seller?.reonic_team_optional ? "Zuweisung ohne Team" : "Bitte beim Berater zuerst ein Reonic-Team auswählen.") + "</p>" : "") +
-          (needsTeam ? "" : fields("assign", '<input type="hidden" name="partner_id" value="' + esc(p.partner_id) + '">' + choice, "Verbindlich zuweisen",id)) + (quick ? '</section>' : '</details>');
+          (needsTeam ? "" : fields("assign", '<input type="hidden" name="partner_id" value="' + esc(p.partner_id) + '">' + choice, "Lead zuweisen",id)) + (quick ? '</section>' : '</details>');
       }).join("") + "</div>" : "<p>Keine passenden Verkäufer gefunden. Prüfe Freigabe, Standort-PLZ und Einsatzradien.</p>") + (unavailable ? "<p>Für " + unavailable + " geeignete Vertriebspartner war kein Fahrtweg abrufbar.</p>" : "") + manualPartnerForm(lead);
     bindOrderChoices(target);
     const manual = target.querySelector('[data-manual-search]');

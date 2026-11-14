@@ -109,7 +109,7 @@ Deno.serve(async (req) => {
           const rows = projects.data.map((project: {
             id:string; name?:string; leadSourceId?:string; address?:{postcode?:string}; customerContact?:{fullName?:string; primaryEmail?:string}
           }) => ({
-            reonic_project_id:project.id, customer_name:(project.customerContact?.fullName?.trim() || project.name?.trim() || "Reonic-Anfrage").slice(0,250),
+            reonic_project_id:project.id, reonic_source_id:project.leadSourceId || null, customer_name:(project.customerContact?.fullName?.trim() || project.name?.trim() || "Reonic-Anfrage").slice(0,250),
             postal_code:/^\d{5}$/.test(project.address?.postcode || "") ? project.address?.postcode : null,
             email:project.customerContact?.primaryEmail || null, source:search.sources ? "Reonic · Neue Anfragen · " + sourceLabels.get(project.leadSourceId || "") : "Reonic · Ohne Status",
           }));
