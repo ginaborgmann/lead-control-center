@@ -168,18 +168,20 @@ Deno.serve(async (req) => {
     if (!partner.active || !partner.reonic_present || !partner.reonic_user_id) {
       throw Error("Der reservierte Berater ist in Reonic nicht mehr verfügbar.");
     }
+    const team = db(await server.from("reonic_teams").select("leader_ids").eq("id",assignment.reonic_team_id).eq("active",true).single());
+    if (!team.leader_ids.length) throw Error("Für dieses Team ist in Reonic kein Teamleiter hinterlegt.");
+    const userIds = [...new Set<string>([partner.reonic_user_id,...team.leader_ids])];
     if ((project.keyAccountManagerId && project.keyAccountManagerId !== partner.reonic_user_id) ||
-        project.assignedUserIds.some((id: string) => id !== partner.reonic_user_id)) {
+        project.assignedUserIds.some((id: string) => !userIds.includes(id))) {
       throw Error("Die Anfrage wurde inzwischen in Reonic einem anderen Berater zugewiesen.");
     }
-    const userIds = [partner.reonic_user_id];
     const teamIds = [...new Set([...project.assignedTeamIds,assignment.reonic_team_id])];
-    if (!project.assignedUserIds.includes(userIds[0]) || !project.assignedTeamIds.includes(assignment.reonic_team_id)) {
+    if (!userIds.every(id => project.assignedUserIds.includes(id)) || !project.assignedTeamIds.includes(assignment.reonic_team_id)) {
       project = await api(path + "/update",{assignedUserIds:userIds,assignedTeamIds:teamIds});
-      if (!project.assignedUserIds?.includes(userIds[0]) || !project.assignedTeamIds?.includes(assignment.reonic_team_id)) {
+      if (!userIds.every(id => project.assignedUserIds?.includes(id)) || !project.assignedTeamIds?.includes(assignment.reonic_team_id)) {
         project = await api(path);
       }
-      if (!project.assignedUserIds?.includes(userIds[0]) || !project.assignedTeamIds?.includes(assignment.reonic_team_id)) {
+      if (!userIds.every(id => project.assignedUserIds?.includes(id)) || !project.assignedTeamIds?.includes(assignment.reonic_team_id)) {
         throw Error("Reonic hat Berater und Team noch nicht bestätigt. Bitte erneut übertragen.");
       }
     }
