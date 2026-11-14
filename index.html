@@ -123,6 +123,20 @@ form.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,2
 .quick-action{margin:0}.quick-action .btn{padding:5px 9px;min-height:30px}
 .quick-manual{margin-top:10px}.quick-manual summary,.quick-row summary{cursor:pointer;color:#ffca59}
 @media(max-width:700px){.quick-layout{grid-template-columns:1fr;gap:8px}.quick-lead .lead-focus-details{display:flex}.quick-row{padding:3px 5px}}
+</style><style>
+.ember-sidebar{background:linear-gradient(168deg,#25110c 0%,#130c0a 28%,#0b0b0c 66%)!important;border-right:1px solid #603018!important}
+.ember-sidebar .ember-brand{display:grid;justify-items:center;gap:12px;padding:18px 6px 28px!important;text-align:center}
+.ember-mark{position:relative;isolation:isolate;display:grid;place-items:center;width:100%;max-width:206px;min-height:123px;overflow:hidden;border:1px solid #9f431f;border-radius:16px;background:radial-gradient(ellipse at 50% 100%,#a4340b 0%,#46170c 38%,#180d0b 70%);box-shadow:inset 0 -2px 10px #e85d2540,0 0 22px #d9421726}
+.ember-mark::before,.ember-mark::after{content:"";position:absolute;z-index:-1;pointer-events:none}
+.ember-mark::before{inset:0;background:radial-gradient(circle at 18% 69%,#ffda92 0 1px,transparent 3px),radial-gradient(circle at 82% 43%,#ffac53 0 1px,transparent 3px),radial-gradient(circle at 25% 28%,#ffa064 0 1px,transparent 2px),radial-gradient(circle at 74% 79%,#fff0be 0 1px,transparent 3px),radial-gradient(circle at 93% 73%,#ed6d3b 0 1px,transparent 2px),radial-gradient(circle at 56% 20%,#e96627 0 1px,transparent 2px)}
+.ember-mark::after{width:85%;height:50%;bottom:-24%;border-radius:50%;background:#ff7a24;filter:blur(19px);opacity:.7}
+.ember-mark b{font-family:Georgia,serif;font-weight:900;font-size:67px;line-height:1;letter-spacing:-.085em;padding-right:.085em;color:#ffce79;background:linear-gradient(#fff0ba 12%,#ffbe64 47%,#ff7e35 70%,#ffbb53);background-clip:text;-webkit-text-fill-color:transparent;filter:drop-shadow(0 2px 1px #7b1808) drop-shadow(0 0 11px #fb5a2480)}
+.ember-sidebar .ember-mark span{color:inherit}
+.ember-caption{font-size:11px;line-height:1.65;letter-spacing:.21em;text-transform:uppercase;color:#fbc98b}
+.ember-sidebar nav button.active,.ember-sidebar nav button:hover{background:linear-gradient(100deg,#713416,#302014)!important;color:#fff0d0!important}
+.ember-sidebar nav button.active{box-shadow:inset 3px 0 #ff9849,0 3px 14px #de55131c}
+.ember-sidebar nav button:focus-visible{outline:2px solid #ffc383;outline-offset:-2px}
+@media(max-width:760px){.ember-sidebar .ember-brand{display:flex;align-items:center;gap:15px;text-align:left;padding:4px 4px 12px!important}.ember-mark{width:82px;min-height:51px;border-radius:10px}.ember-mark b{font-size:34px}.ember-caption{font-size:10px}}
 </style></head><body>
 <div id="gb-connect"><form id="login" class="gb-login">
   <div class="gb-brand">G.B</div><h2>Lead Control Center</h2>
@@ -132,7 +146,10 @@ form.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,2
   <p id="login-status" role="status">Anmeldung wird vorbereitet …</p>
 </form></div>
 <div class="app" id="app" hidden>
-  <aside><div class="brand"><span>G.B</span> LEAD CONTROL CENTER</div>
+  <aside class="ember-sidebar"><div class="brand ember-brand" aria-label="G.B Lead Control Center">
+      <div class="ember-mark" aria-hidden="true"><b>G<span>.</span>B</b></div>
+      <div class="ember-caption" aria-hidden="true">Lead Control<br>Center</div>
+    </div>
     <nav aria-label="Hauptmenü">
       <button data-view="dashboard">Dashboard</button><button data-view="leads">Leads &amp; Zuweisung</button>
       <button data-view="partners">Verkäufer</button><button data-view="orders">Bestellungen</button>
