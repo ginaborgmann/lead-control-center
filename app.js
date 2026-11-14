@@ -228,7 +228,8 @@ function leadRecord(l) {
   const pending = a && l.reonic_project_id && !a.reonic_synced_at;
   const team = data.teams.find(team => team.id === a?.reonic_team_id);
   const actions = a ? '<p>Zuweisung an ' + esc(nameFor(a.partner_id)) + ' · ' + date(a.assigned_at) +
-    ' · ' + a.distance_km.toLocaleString("de-DE",{maximumFractionDigits:1}) + ' km Luftlinie' +
+    (a.manual ? ' · Manuell zugewiesen' : '') +
+    (a.distance_km == null ? '' : ' · ' + a.distance_km.toLocaleString("de-DE",{maximumFractionDigits:1}) + ' km Luftlinie') +
     (team ? ' · Team ' + esc(team.name) : '') +
     (pending ? '<p>Übertragung an Reonic ausstehend.</p>' + btn("Erneut an Reonic übertragen", 'data-command="retry-reonic" data-id="' + esc(l.id) + '"') : '') +
     (order ? ' · Bestellung vom ' + date(order.created_at) : '') + '</p>' +
@@ -308,7 +309,7 @@ async function save(action, values, id) {
         await reonicRequests({action:"assign",lead_id:id,...values});
         return;
       }
-      result = await client.from("lead_assignments").insert({lead_id:id,partner_id:values.partner_id,order_id:optional(values.order_id)});
+      result = await client.from("lead_assignments").insert({lead_id:id,partner_id:values.partner_id,order_id:optional(values.order_id),manual:values.manual === "true"});
       if (result.error?.code === "23505") throw Error("Dieser Lead ist bereits zugewiesen. Bitte aktualisieren.");
       break;
     default: throw Error("Unbekannte Aktion.");
@@ -333,6 +334,19 @@ async function advanceQuick(delta = 0) {
   }
   focusId = next.id;
   await suggest(next.id,true);
+}
+function manualPartnerForm(lead) {
+  const partners = data.partners.filter(p => p.active && p.reonic_present &&
+    (!lead.reonic_project_id || (p.reonic_user_id && data.teams.some(t => t.id === p.reonic_team_id && t.active))))
+    .sort((a,b) => a.full_name.localeCompare(b.full_name,"de"));
+  if (!partners.length) return '<div class="focus-other"><h3>Vertriebspartner manuell auswählen</h3><p>Schalte zuerst einen Vertriebspartner frei' +
+    (lead.reonic_project_id ? ' und hinterlege sein Reonic-Team' : '') + '.</p></div>';
+  return '<div class="focus-other"><h3>Vertriebspartner manuell auswählen</h3>' + fields("assign",
+    '<input type="hidden" name="manual" value="true">' +
+    input("Name oder PLZ suchen","partner_search","",'type="search" autocomplete="off" data-manual-search') +
+    select("Vertriebspartner","partner_id",[["","Bitte wählen"],...partners.map(p =>
+      [p.id,p.full_name + " · " + (p.postal_code || p.reonic_postal_code || "PLZ fehlt")])],""),
+    "Manuell zuweisen",lead.id) + '</div>';
 }
 async function suggest(id, quick = false) {
   const lead = data.leads.find(l => l.id === id);
@@ -375,7 +389,20 @@ async function suggest(id, quick = false) {
           p.distance_km.toLocaleString("de-DE",{maximumFractionDigits:2}) + " km Luftlinie · Priorität " + p.priority + (quick ? '</strong>' : '</summary>') +
           (lead.reonic_project_id ? "<p>" + (team ? "Reonic-Team: " + esc(team.name) : "Bitte beim Berater zuerst ein Reonic-Team auswählen.") + "</p>" : "") +
           (needsTeam ? "" : fields("assign", '<input type="hidden" name="partner_id" value="' + esc(p.partner_id) + '">' + choice, "Verbindlich zuweisen",id)) + (quick ? '</section>' : '</details>');
-      }).join("") + "</div>" : "<p>Keine passenden Verkäufer gefunden. Prüfe Freigabe, Standort-PLZ und Einsatzradien.</p>");
+      }).join("") + "</div>" : "<p>Keine passenden Verkäufer gefunden. Prüfe Freigabe, Standort-PLZ und Einsatzradien.</p>") + manualPartnerForm(lead);
+    const manual = target.querySelector('[data-manual-search]');
+    if (manual) {
+      const partnerSelect = manual.form.elements.partner_id;
+      partnerSelect.required = true;
+      const allOptions = Array.from(partnerSelect.options);
+      manual.addEventListener("input", () => {
+        const query = manual.value.trim().toLocaleLowerCase("de");
+        const selected = partnerSelect.value;
+        partnerSelect.replaceChildren(...allOptions.filter(option =>
+          !option.value || option.textContent.toLocaleLowerCase("de").includes(query)));
+        partnerSelect.value = Array.from(partnerSelect.options).some(option => option.value === selected) ? selected : "";
+      });
+    }
     const contact = await contactLookup;
     if (contact && isCurrent()) {
       const extra = [contact.address,contact.city,contact.email === lead.email ? null : contact.email,contact.phone === lead.phone ? null : contact.phone];
@@ -448,7 +475,9 @@ document.addEventListener("submit",async event => {
   if (saving) return;
   const values = formData(form);
   const action = form.dataset.action;
-  if (action === "assign" && !window.confirm("Diesen Lead verbindlich zuweisen?")) return;
+  if (action === "assign" && !window.confirm(values.manual === "true"
+    ? "Diesen Lead dem ausgewählten Vertriebspartner manuell zuweisen? Der Einsatzradius wird bei dieser Auswahl nicht geprüft."
+    : "Diesen Lead verbindlich zuweisen?")) return;
   saving = true;
   const button = event.submitter;
   if (button) button.disabled = true;
