@@ -52,6 +52,26 @@ Deno.serve(async (req) => {
       if (!result.ok) throw Error("Reonic meldet HTTP " + result.status + " für " + path.split(/[/?]/)[0] + ".");
       return result.json();
     };
+    async function requestScope() {
+      const [columns, sources] = await Promise.all([api("kanbanColumns"),api("leadSources")]);
+      if (!Array.isArray(columns.data) || !Array.isArray(sources.data) ||
+          columns.pagination?.next || sources.pagination?.next) {
+        throw Error("Reonic hat die Spalten oder Lead-Quellen nicht vollständig geliefert.");
+      }
+      const normalize = (label: string) => label.toLocaleLowerCase("de-DE").replace(/[^a-z0-9]/g,"");
+      const newColumns = columns.data.filter((c: {name:string;archivedAt?:string}) =>
+        !c.archivedAt && normalize(c.name) === "neueanfragen").map((c: {id:string}) => c.id);
+      const labels = new Map<string,string>([["leadnotes","Lead Notes"],["betterbusiness","Better Business"]]);
+      const sourceLabels = new Map<string,string>();
+      for (const source of sources.data) {
+        const label = labels.get(normalize(source.name));
+        if (!source.archivedAt && label) sourceLabels.set(source.id,label);
+      }
+      if (!newColumns.length || new Set(sourceLabels.values()).size !== labels.size) {
+        throw Error("Reonic: „Neue Anfragen“, „Lead Notes“ oder „Better Business“ konnte nicht eindeutig gefunden werden.");
+      }
+      return {newColumns,sourceLabels};
+    }
     if (body.action === "sync") {
       const teams = await api("teams");
       if (!Array.isArray(teams.data) || teams.pagination?.next ||
@@ -66,28 +86,38 @@ Deno.serve(async (req) => {
       const missing = prior.filter((team: {id:string}) => !seen.has(team.id)).map((team: {id:string}) => team.id);
       if (missing.length) db(await server.from("reonic_teams").update({active:false}).in("id",missing));
 
-      const ids: string[] = [];
-      for (let page = 1; page <= 100; page++) {
-        const projects = await api("residentialProjects?stage=request&kanbanColumnIds=null&assignedUserIds=null&keyAccountManagerIds=null&itemsPerPage=200&page=" + page);
-        if (!Array.isArray(projects.data) || !projects.pagination ||
-            projects.data.some((project: {id?:unknown}) => typeof project.id !== "string")) {
-          throw Error("Die Reonic-Anfragen konnten nicht vollständig gelesen werden.");
+      const {newColumns,sourceLabels} = await requestScope();
+      const ids = new Set<string>();
+      const searches = [
+        {columns:"null", sources:null},
+        ...newColumns.map((id: string) => ({columns:id,sources:[...sourceLabels.keys()].join(",")})),
+      ];
+      for (const search of searches) {
+        let complete = false;
+        for (let page = 1; page <= 100; page++) {
+          const query = new URLSearchParams({stage:"request",kanbanColumnIds:search.columns,assignedUserIds:"null",
+            keyAccountManagerIds:"null",itemsPerPage:"200",page:String(page)});
+          if (search.sources) query.set("leadSourceIds",search.sources);
+          const projects = await api("residentialProjects?" + query);
+          if (!Array.isArray(projects.data) || !projects.pagination ||
+              projects.data.some((project: {id?:unknown}) => typeof project.id !== "string")) {
+            throw Error("Die Reonic-Anfragen konnten nicht vollständig gelesen werden.");
+          }
+          const rows = projects.data.map((project: {
+            id:string; name?:string; leadSourceId?:string; address?:{postcode?:string}; customerContact?:{fullName?:string; email?:string; phone?:string}
+          }) => ({
+            reonic_project_id:project.id, customer_name:(project.name?.trim() || project.customerContact?.fullName || "Reonic-Anfrage").slice(0,250),
+            postal_code:/^\d{5}$/.test(project.address?.postcode || "") ? project.address?.postcode : null,
+            email:project.customerContact?.email || null, phone:project.customerContact?.phone || null, source:search.sources ? "Reonic · Neue Anfragen · " + sourceLabels.get(project.leadSourceId || "") : "Reonic · Ohne Status",
+          }));
+          if (rows.length) db(await server.from("leads").upsert(rows,{onConflict:"reonic_project_id",ignoreDuplicates:true}));
+          for (const row of rows) ids.add(row.reonic_project_id);
+          if (!projects.pagination.next) { complete = true; break; }
         }
-        const rows = projects.data.map((project: {
-          id:string; name?:string; address?:{postcode?:string}; customerContact?:{fullName?:string; email?:string; phone?:string}
-        }) => ({
-          reonic_project_id:project.id, customer_name:(project.name?.trim() || project.customerContact?.fullName || "Reonic-Anfrage").slice(0,250),
-          postal_code:/^\d{5}$/.test(project.address?.postcode || "") ? project.address?.postcode : null,
-          email:project.customerContact?.email || null, phone:project.customerContact?.phone || null, source:"Reonic · Ohne Status",
-        }));
-        if (rows.length) db(await server.from("leads").upsert(rows,{onConflict:"reonic_project_id",ignoreDuplicates:true}));
-        ids.push(...rows.map((row: {reonic_project_id:string}) => row.reonic_project_id));
-        if (!projects.pagination.next) {
-          db(await server.rpc("reconcile_reonic_queue",{p_ids:ids}));
-          return reply({success:true,count:ids.length,teams:teamRows.filter((team:{active:boolean})=>team.active).length});
-        }
+        if (!complete) throw Error("Der Abruf hat die maximale Seitenzahl erreicht. Bitte Reonic-Anfragen prüfen.");
       }
-      throw Error("Der Abruf hat die maximale Seitenzahl erreicht. Bitte Reonic-Anfragen prüfen.");
+      db(await server.rpc("reconcile_reonic_queue",{p_ids:[...ids]}));
+      return reply({success:true,count:ids.size,teams:teamRows.filter((team:{active:boolean})=>team.active).length});
     }
     if (body.action !== "assign" || typeof body.lead_id !== "string") return reply({error:"Ungültige Aktion."},400);
     const lead = db(await server.from("leads").select("id,reonic_project_id").eq("id",body.lead_id).single());
@@ -101,8 +131,14 @@ Deno.serve(async (req) => {
     }
     if (!assignment) {
       if (!body.partner_id) return reply({error:"Bitte einen Berater auswählen."},400);
-      if (project.archivedAt || project.stage !== "request" || project.kanbanColumnId || project.keyAccountManagerId || project.assignedUserIds.length) {
-        return reply({error:"Die Anfrage ist in Reonic nicht mehr ohne Status und ohne Berater."},409);
+      if (project.archivedAt || project.stage !== "request" || project.keyAccountManagerId || project.assignedUserIds.length) {
+        return reply({error:"Die Anfrage ist in Reonic nicht mehr offen und ohne Berater."},409);
+      }
+      if (project.kanbanColumnId) {
+        const scope = await requestScope();
+        if (!scope.newColumns.includes(project.kanbanColumnId) || !scope.sourceLabels.has(project.leadSourceId)) {
+          return reply({error:"Die Anfrage gehört nicht mehr zu den ausgewählten Reonic-Spalten und Quellen."},409);
+        }
       }
       const result = await server.rpc("reserve_reonic_assignment",{
         p_lead:lead.id,p_partner:body.partner_id,p_order:body.order_id || null,p_actor:user.id,
