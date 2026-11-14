@@ -61,14 +61,14 @@ Deno.serve(async (req) => {
       const normalize = (label: string) => label.toLocaleLowerCase("de-DE").replace(/[^a-z0-9]/g,"");
       const newColumns = columns.data.filter((c: {name:string;archivedAt?:string}) =>
         !c.archivedAt && normalize(c.name) === "neueanfragen").map((c: {id:string}) => c.id);
-      const labels = new Map<string,string>([["leadnotes","Lead Notes"],["betterbusiness","Better Business"]]);
+      const labels = new Map<string,string>([["leadnodes","Leadnodes"],["betterbusiness","Better Business"]]);
       const sourceLabels = new Map<string,string>();
       for (const source of sources.data) {
         const label = labels.get(normalize(source.name));
         if (!source.archivedAt && label) sourceLabels.set(source.id,label);
       }
       if (!newColumns.length || new Set(sourceLabels.values()).size !== labels.size) {
-        throw Error("Reonic: „Neue Anfragen“, „Lead Notes“ oder „Better Business“ konnte nicht eindeutig gefunden werden.");
+        throw Error("Reonic: „Neue Anfragen“, „Leadnodes“ oder „Better Business“ konnte nicht eindeutig gefunden werden.");
       }
       return {newColumns,sourceLabels};
     }
