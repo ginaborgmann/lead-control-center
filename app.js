@@ -285,9 +285,13 @@ function sellerOrders(p) {
 }
 function orderRecord(o) {
   const assigned = data.assignments.filter(a => a.order_id === o.id);
+  const counted = assigned.filter(a => confirmed(a) && (o.order_type !== "weekly" ||
+    weekStart(a.reonic_synced_at || a.assigned_at) === weekStart(Date.now()))).length;
+  const progress = (o.quantity == null ? "Menge offen" : o.quantity + " bestellt") + " · " + counted +
+    (o.order_type === "weekly" ? " diese Woche zugewiesen" : " zugewiesen");
   return record(esc(o.partner_id ? nameFor(o.partner_id) : "Freie Gebietsbestellung") + " · " +
     esc(orderStatuses[o.status] || o.status) + " · " + date(o.created_at),
-    "<p>" + esc(supplierFor(o.supplier_id)) + " · " + assigned.length + " verknüpfte Leads</p>" + orderForm(o) +
+    "<p>" + esc(supplierFor(o.supplier_id)) + " · " + progress + "</p>" + orderForm(o) +
     (assigned.length ? "<ul>" + assigned.map(a => "<li>" + esc(data.leads.find(l => l.id === a.lead_id)?.customer_name) + " · " + date(a.assigned_at) + "</li>").join("") + "</ul>" : "") + historyFor("lead_orders",o.id,orderStatuses));
 }
 
