@@ -110,7 +110,7 @@ Deno.serve(async (req) => {
             postal_code:/^\d{5}$/.test(project.address?.postcode || "") ? project.address?.postcode : null,
             email:project.customerContact?.email || null, phone:project.customerContact?.phone || null, source:search.sources ? "Reonic · Neue Anfragen · " + sourceLabels.get(project.leadSourceId || "") : "Reonic · Ohne Status",
           }));
-          if (rows.length) db(await server.from("leads").upsert(rows,{onConflict:"reonic_project_id",ignoreDuplicates:true}));
+          if (rows.length) db(await server.from("leads").upsert(rows,{onConflict:"reonic_project_id"}));
           for (const row of rows) ids.add(row.reonic_project_id);
           if (!projects.pagination.next) { complete = true; break; }
         }
