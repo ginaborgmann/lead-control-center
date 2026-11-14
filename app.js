@@ -158,7 +158,7 @@ function renderRecords() {
   if (!$("records")) return;
   const lists = {
     leads: () => [...data.leads].sort((a,b) => b.created_at.localeCompare(a.created_at)).filter(l =>
-      (!filter.status || (filter.status === "reonic" ? l.reonic_project_id && l.status === "new" : l.status === filter.status)) && matches(l.customer_name, l.postal_code, l.source, l.email, l.phone)).map(leadRecord),
+      (!filter.status || (filter.status === "reonic" ? l.reonic_project_id && l.reonic_queue_open && l.status === "new" : l.status === filter.status)) && matches(l.customer_name, l.postal_code, l.source, l.email, l.phone)).map(leadRecord),
     partners: () => [...data.partners].sort((a,b) => a.full_name.localeCompare(b.full_name, "de")).filter(p =>
       matches(p.full_name, p.postal_code, p.reonic_postal_code, p.email, p.phone, p.reonic_user_id)).map(partnerRecord),
     orders: () => [...data.orders].sort((a,b) => b.created_at.localeCompare(a.created_at)).filter(o =>
@@ -186,8 +186,8 @@ function leadRecord(l) {
     (pending ? '<p>Übertragung an Reonic ausstehend.</p>' + btn("Erneut an Reonic übertragen", 'data-command="retry-reonic" data-id="' + esc(l.id) + '"') : '') +
     (order ? ' · Bestellung vom ' + date(order.created_at) : '') + '</p>' +
     fields("leadStatus", select("Status", "status", Object.entries(statuses).slice(1),l.status), "Status speichern", l.id) :
-    btn("Verkäufer vorschlagen", 'data-command="suggest" data-id="' + esc(l.id) + '"');
-  return record(esc(l.customer_name) + " · " + esc(l.postal_code || "PLZ fehlt") + " · " + esc(pending ? "Reonic-Übertragung ausstehend" : l.reonic_project_id && !a ? "Reonic · Ohne Status" : statuses[l.status]), meta + actions + historyFor("leads",l.id,statuses));
+    l.reonic_project_id && !l.reonic_queue_open ? "<p>Diese Anfrage ist in Reonic nicht mehr in der offenen Warteschlange.</p>" : btn("Verkäufer vorschlagen", 'data-command="suggest" data-id="' + esc(l.id) + '"');
+  return record(esc(l.customer_name) + " · " + esc(l.postal_code || "PLZ fehlt") + " · " + esc(pending ? "Reonic-Übertragung ausstehend" : l.reonic_project_id && !a ? (l.reonic_queue_open ? "Reonic · Ohne Status" : "Reonic · Nicht mehr offen") : statuses[l.status]), meta + actions + historyFor("leads",l.id,statuses));
 }
 function partnerRecord(p) {
   const zip = p.postal_code || p.reonic_postal_code;
