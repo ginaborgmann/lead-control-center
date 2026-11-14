@@ -66,7 +66,7 @@ Deno.serve(async (req) => {
       const missing = prior.filter((team: {id:string}) => !seen.has(team.id)).map((team: {id:string}) => team.id);
       if (missing.length) db(await server.from("reonic_teams").update({active:false}).in("id",missing));
 
-      let count = 0;
+      const ids: string[] = [];
       for (let page = 1; page <= 100; page++) {
         const projects = await api("residentialProjects?stage=request&kanbanColumnIds=null&assignedUserIds=null&keyAccountManagerIds=null&itemsPerPage=200&page=" + page);
         if (!Array.isArray(projects.data) || !projects.pagination ||
@@ -81,8 +81,11 @@ Deno.serve(async (req) => {
           email:project.customerContact?.email || null, phone:project.customerContact?.phone || null, source:"Reonic · Ohne Status",
         }));
         if (rows.length) db(await server.from("leads").upsert(rows,{onConflict:"reonic_project_id",ignoreDuplicates:true}));
-        count += rows.length;
-        if (!projects.pagination.next) return reply({success:true,count,teams:teamRows.filter((team:{active:boolean})=>team.active).length});
+        ids.push(...rows.map((row: {reonic_project_id:string}) => row.reonic_project_id));
+        if (!projects.pagination.next) {
+          db(await server.rpc("reconcile_reonic_queue",{p_ids:ids}));
+          return reply({success:true,count:ids.length,teams:teamRows.filter((team:{active:boolean})=>team.active).length});
+        }
       }
       throw Error("Der Abruf hat die maximale Seitenzahl erreicht. Bitte Reonic-Anfragen prüfen.");
     }
@@ -97,6 +100,7 @@ Deno.serve(async (req) => {
       throw Error("Reonic hat die aktuellen Zuweisungen der Anfrage nicht vollständig geliefert.");
     }
     if (!assignment) {
+      if (!body.partner_id) return reply({error:"Bitte einen Berater auswählen."},400);
       if (project.archivedAt || project.stage !== "request" || project.kanbanColumnId || project.keyAccountManagerId || project.assignedUserIds.length) {
         return reply({error:"Die Anfrage ist in Reonic nicht mehr ohne Status und ohne Berater."},409);
       }
