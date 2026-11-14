@@ -18,7 +18,7 @@ const statuses = { new: "Neu", assigned: "Zugewiesen", in_progress: "In Bearbeit
 const orderStatuses = { draft: "Entwurf", open: "Offen", in_progress: "In Bearbeitung", completed: "Abgeschlossen", cancelled: "Storniert" };
 const zipAttr = 'inputmode="numeric" pattern="[0-9]{5}" maxlength="5"';
 let client, view = "dashboard", data, refreshVersion = 0, recovery = false;
-const filter = { leads: "", partners: "", orders: "", status: "" };
+const filter = { leads: "", partners: "", orders: "", status: "", orderSort: "az", orderSupplier: "" };
 async function reonicRequests(body) {
   const result = await client.functions.invoke("reonic-requests",{body});
   if (result.error) {
@@ -169,9 +169,16 @@ function partners() {
 }
 
 function orders() {
+  const orderedSupplierIds = new Set(data.orders.map(o => o.supplier_id));
+  const suppliers = data.suppliers.filter(s => s.active || orderedSupplierIds.has(s.id))
+    .sort((a,b) => a.name.localeCompare(b.name,"de",{sensitivity:"base"}));
   return panel('<h2>Neue Lead-Bestellung</h2>' + orderForm({ order_type: "once", status: "open" })) +
     panel('<h2>Bestellungen</h2><div class="controls">' + search("Bestellung, Verkäufer oder Anbieter suchen") +
-      '</div><div id="records"></div>');
+      '<label>Sortierung <select id="order-sort">' +
+      options([["az","Berater A–Z"],["za","Berater Z–A"],["newest","Neueste zuerst"]],filter.orderSort) +
+      '</select></label><label>Lead-Anbieter <select id="order-supplier">' +
+      options([["","Alle Anbieter"],...suppliers.map(s => [s.id,s.name]),["unassigned","Ohne Anbieter"]],filter.orderSupplier) +
+      '</select></label></div><p id="order-result-count" class="muted" role="status"></p><div id="records"></div>');
 }
 function orderForm(o) {
   const sellers = [["", "Freie Gebietsbestellung"], ...data.partners.map(p => [p.id, p.full_name])];
@@ -237,8 +244,20 @@ function renderRecords() {
       matchesLeadStatus(l) && matches(l.customer_name, l.postal_code, l.source, l.email, l.phone)).map(leadRecord),
     partners: () => [...data.partners].sort((a,b) => a.full_name.localeCompare(b.full_name, "de")).filter(p =>
       matches(p.full_name, p.postal_code, p.reonic_postal_code, p.email, p.phone, p.reonic_user_id)).map(partnerRecord),
-    orders: () => [...data.orders].sort((a,b) => b.created_at.localeCompare(a.created_at)).filter(o =>
-      matches(o.id, nameFor(o.partner_id), supplierFor(o.supplier_id), o.postal_code, orderStatuses[o.status] || o.status)).map(orderRecord)
+    orders: () => {
+      const visible = data.orders.filter(o =>
+        (!filter.orderSupplier || (o.supplier_id || "unassigned") === filter.orderSupplier) &&
+        matches(o.id, nameFor(o.partner_id), supplierFor(o.supplier_id), o.postal_code, orderStatuses[o.status] || o.status));
+      visible.sort((a,b) => {
+        const newest = b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
+        if (filter.orderSort === "newest") return newest;
+        if (!a.partner_id || !b.partner_id) return Number(!a.partner_id)-Number(!b.partner_id) || newest;
+        const byName = nameFor(a.partner_id).localeCompare(nameFor(b.partner_id),"de",{sensitivity:"base"});
+        return byName * (filter.orderSort === "za" ? -1 : 1) || newest;
+      });
+      $("order-result-count").textContent = visible.length + " von " + data.orders.length + " Bestellungen";
+      return visible.map(orderRecord);
+    }
   };
   $("records").innerHTML = lists[view]().join("") || '<p class="muted">Keine passenden Einträge.</p>';
 }
@@ -583,8 +602,10 @@ document.addEventListener("input",event => {
   renderRecords();
 });
 $("workspace").addEventListener("change",event => {
-  if (event.target.id !== "lead-status") return;
-  filter.status = event.target.value;
+  const fields = {"lead-status":"status","order-sort":"orderSort","order-supplier":"orderSupplier"};
+  const field = fields[event.target.id];
+  if (!field) return;
+  filter[field] = event.target.value;
   renderRecords();
 });
 document.addEventListener("click",async event => {
