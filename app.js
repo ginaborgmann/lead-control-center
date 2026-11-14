@@ -174,7 +174,16 @@ function partnerRecord(p) {
     fields("partner", input("Manuelle PLZ", "postal_code", p.postal_code, zipAttr) +
       input("Einsatzradius (km)", "radius_km", p.radius_km, 'type="number" min="0.1" max="2000" step="0.1"') +
       input("Priorität", "priority", p.priority, 'type="number" step="1" required') +
-      select("Freigabe", "active", [["true","Freigeschaltet"],["false","Deaktiviert"]],String(p.active)), "Verkäufer speichern",p.id));
+      select("Freigabe", "active", [["true","Freigeschaltet"],["false","Deaktiviert"]],String(p.active)), "Verkäufer speichern",p.id) + sellerOrders(p));
+}
+function sellerOrders(p) {
+  const linked = data.orders.filter(o => o.partner_id === p.id);
+  return '<h3>Bestellungen</h3>' +
+    (linked.length ? linked.map(orderRecord).join("") : '<p class="muted">Noch keine Bestellung erfasst.</p>') +
+    record("Neue Bestellung für " + esc(p.full_name),orderForm({
+      partner_id:p.id, order_type:"once", status:"open",
+      postal_code:p.postal_code || p.reonic_postal_code, radius_km:p.radius_km
+    }));
 }
 function orderRecord(o) {
   const assigned = data.assignments.filter(a => a.order_id === o.id);
