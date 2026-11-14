@@ -1,0 +1,1 @@
+grant update (reonic_project_id) on public.leads to service_role;
