@@ -104,11 +104,11 @@ Deno.serve(async (req) => {
             throw Error("Die Reonic-Anfragen konnten nicht vollständig gelesen werden.");
           }
           const rows = projects.data.map((project: {
-            id:string; name?:string; leadSourceId?:string; address?:{postcode?:string}; customerContact?:{fullName?:string; email?:string; phone?:string}
+            id:string; name?:string; leadSourceId?:string; address?:{postcode?:string}; customerContact?:{fullName?:string; primaryEmail?:string}
           }) => ({
-            reonic_project_id:project.id, customer_name:(project.name?.trim() || project.customerContact?.fullName || "Reonic-Anfrage").slice(0,250),
+            reonic_project_id:project.id, customer_name:(project.customerContact?.fullName?.trim() || project.name?.trim() || "Reonic-Anfrage").slice(0,250),
             postal_code:/^\d{5}$/.test(project.address?.postcode || "") ? project.address?.postcode : null,
-            email:project.customerContact?.email || null, phone:project.customerContact?.phone || null, source:search.sources ? "Reonic · Neue Anfragen · " + sourceLabels.get(project.leadSourceId || "") : "Reonic · Ohne Status",
+            email:project.customerContact?.primaryEmail || null, source:search.sources ? "Reonic · Neue Anfragen · " + sourceLabels.get(project.leadSourceId || "") : "Reonic · Ohne Status",
           }));
           if (rows.length) db(await server.from("leads").upsert(rows,{onConflict:"reonic_project_id"}));
           for (const row of rows) ids.add(row.reonic_project_id);
@@ -118,6 +118,19 @@ Deno.serve(async (req) => {
       }
       db(await server.rpc("reconcile_reonic_queue",{p_ids:[...ids]}));
       return reply({success:true,count:ids.size,teams:teamRows.filter((team:{active:boolean})=>team.active).length});
+    }
+    if (body.action === "contact" && typeof body.lead_id === "string") {
+      const lead = db(await server.from("leads").select("reonic_project_id").eq("id",body.lead_id).single());
+      if (!lead.reonic_project_id) return reply({error:"Kein Reonic-Kontakt verfügbar."},404);
+      const project = await api("residentialProjects/" + encodeURIComponent(lead.reonic_project_id));
+      const contactId = project.customerContact?.id;
+      if (!contactId) return reply({contact:null});
+      const contact = await api("contacts/" + encodeURIComponent(contactId));
+      return reply({contact:{
+        name:contact.fullName, email:contact.primaryEmail, phone:contact.mobile || contact.phone,
+        address:[project.address?.street,project.address?.houseNumber].filter(Boolean).join(" "),
+        city:project.address?.city,
+      }});
     }
     if (body.action !== "assign" || typeof body.lead_id !== "string") return reply({error:"Ungültige Aktion."},400);
     const lead = db(await server.from("leads").select("id,reonic_project_id").eq("id",body.lead_id).single());
