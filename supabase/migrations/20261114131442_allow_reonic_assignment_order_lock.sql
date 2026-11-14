@@ -1,0 +1,1 @@
+grant update (status) on public.lead_orders to service_role;
