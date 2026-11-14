@@ -28,8 +28,30 @@ async function reonicRequests(body) {
   return result.data;
 }
 let importing = false;
+let refreshingReonic = false;
+async function refreshReonic() {
+  if (refreshingReonic) return;
+  refreshingReonic = true;
+  $("reload").disabled = true;
+  message("Reonic wird aktualisiert …");
+  const errors = [];
+  let users, requests;
+  try {
+    try { users = await sync(); }
+    catch (error) { errors.push("Benutzer: " + error.message); }
+    try { requests = await reonicRequests({action:"sync"}); }
+    catch (error) { errors.push("Teams und Anfragen: " + error.message); }
+    await refresh();
+    const counts = [users && users.count + " Benutzer",requests && requests.teams + " Teams",
+      requests && requests.suppliers + " Leadquellen",requests && requests.count + " offene Anfragen"].filter(Boolean);
+    message([...counts, ...errors].join(" · "));
+  } finally {
+    refreshingReonic = false;
+    $("reload").disabled = false;
+  }
+}
 async function importRequests(showCount = false) {
-  if (importing) return;
+  if (importing || refreshingReonic) return;
   importing = true;
   try {
     const result = await reonicRequests({action:"sync"});
@@ -597,8 +619,7 @@ async function sync() {
   }
   if (!result?.success) throw Error("Reonic hat keinen erfolgreichen Abruf bestätigt.");
   syncError = "";
-  message(result.count + " Reonic-Benutzer verarbeitet.");
-  await refresh();
+  return result;
 }
 document.addEventListener("input",event => {
   if (!event.target.matches("[data-search]")) return;
@@ -639,7 +660,7 @@ document.addEventListener("click",async event => {
   if (button.dataset.command === "sync") {
     button.disabled = true;
     message("Reonic wird synchronisiert …");
-    try { await sync(); } catch(error) { syncError = error.message; message("Reonic: " + syncError); render(); }
+    try { await refreshReonic(); } catch(error) { syncError = error.message; message("Reonic: " + syncError); render(); }
     finally { button.disabled = false; }
   }
 });
@@ -720,7 +741,7 @@ async function open(session) {
   $("connection").textContent = "Supabase wird geprüft …";
   message("");
   await refresh();
-  void importRequests();
+  void refreshReonic();
 }
 function showRecovery() {
   recovery = true;
@@ -770,8 +791,7 @@ $("logout").addEventListener("click",async () => {
   lock("Abgemeldet.");
 });
 $("reload").addEventListener("click",async () => {
-  const result = await client.auth.getSession();
-  await open(result.data?.session);
+  await refreshReonic();
 });
 async function init() {
   if (!window.supabase?.createClient) { lock("Die Anmeldung konnte nicht geladen werden. Bitte die Seite neu laden."); return; }
