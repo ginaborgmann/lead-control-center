@@ -154,7 +154,7 @@ Deno.serve(async (req) => {
         }
       }
       const result = await server.rpc("reserve_reonic_assignment",{
-        p_lead:lead.id,p_partner:body.partner_id,p_order:body.order_id || null,p_actor:user.id,
+        p_lead:lead.id,p_partner:body.partner_id,p_order:body.order_id || null,p_actor:user.id,p_manual:body.manual === "true",
       });
       assignment = await readAssignment(server,lead.id);
       if (!assignment) throw Error(result.error?.message || "Die Zuweisung konnte nicht gespeichert werden.");
