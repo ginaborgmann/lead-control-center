@@ -168,23 +168,22 @@ Deno.serve(async (req) => {
     if (!partner.active || !partner.reonic_present || !partner.reonic_user_id) {
       throw Error("Der reservierte Berater ist in Reonic nicht mehr verfügbar.");
     }
-    const team = assignment.reonic_team_id ? db(await server.from("reonic_teams").select("leader_ids").eq("id",assignment.reonic_team_id).eq("active",true).single()) : null;
-    if (team && !team.leader_ids.length) throw Error("Für dieses Team ist in Reonic kein Teamleiter hinterlegt.");
-    const userIds = [...new Set<string>([partner.reonic_user_id,...(team?.leader_ids || [])])];
-    if ((project.keyAccountManagerId && project.keyAccountManagerId !== partner.reonic_user_id) ||
-        project.assignedUserIds.some((id: string) => !userIds.includes(id))) {
-      throw Error("Die Anfrage wurde inzwischen in Reonic einem anderen Berater zugewiesen.");
+    if (project.keyAccountManagerId && project.keyAccountManagerId !== partner.reonic_user_id) {
+      throw Error("Die Anfrage wurde inzwischen in Reonic einem anderen Key-Account zugewiesen.");
+    }
+    if (!project.keyAccountManagerId && project.assignedUserIds.length) {
+      throw Error("Die Anfrage hat inzwischen eine Benutzerzuweisung in Reonic.");
     }
     const teamIds = assignment.reonic_team_id ? [...new Set([...project.assignedTeamIds,assignment.reonic_team_id])] : project.assignedTeamIds;
-    const teamConfirmed = () => !assignment.reonic_team_id || project.assignedTeamIds?.includes(assignment.reonic_team_id);
-    if (!userIds.every(id => project.assignedUserIds.includes(id)) || !teamConfirmed()) {
-      project = await api(path + "/update",{assignedUserIds:userIds,assignedTeamIds:teamIds});
-      if (!userIds.every(id => project.assignedUserIds?.includes(id)) || !teamConfirmed()) {
-        project = await api(path);
-      }
-      if (!userIds.every(id => project.assignedUserIds?.includes(id)) || !teamConfirmed()) {
-        throw Error("Reonic hat Berater und Team noch nicht bestätigt. Bitte erneut übertragen.");
-      }
+    const confirmed = () => project.keyAccountManagerId === partner.reonic_user_id &&
+      (!assignment.reonic_team_id || project.assignedTeamIds?.includes(assignment.reonic_team_id));
+    if (!confirmed()) {
+      project = await api(path + "/update",{
+        keyAccountManagerId:partner.reonic_user_id,
+        ...(assignment.reonic_team_id ? {assignedTeamIds:teamIds} : {}),
+      });
+      if (!confirmed()) project = await api(path);
+      if (!confirmed()) throw Error("Reonic hat Key-Account und Team noch nicht bestätigt. Bitte erneut übertragen.");
     }
     db(await server.from("lead_assignments").update({reonic_synced_at:new Date().toISOString()}).eq("lead_id",lead.id));
     return reply({success:true});
