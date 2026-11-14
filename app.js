@@ -311,7 +311,11 @@ function orderRecord(o) {
     weekStart(a.reonic_synced_at || a.assigned_at) === weekStart(Date.now()))).length;
   const progress = (o.quantity == null ? "Menge offen" : o.quantity + " bestellt") + " · " + counted +
     (o.order_type === "weekly" ? " diese Woche zugewiesen" : " zugewiesen");
+  const supplier = o.supplier_id ? supplierFor(o.supplier_id) : "Ohne Anbieter";
+  const volume = o.quantity == null ? "Menge offen" : o.quantity +
+    (o.quantity === 1 ? " Lead" : " Leads") + (o.order_type === "weekly" ? " pro Woche" : " einmalig");
   return record(esc(o.partner_id ? nameFor(o.partner_id) : "Freie Gebietsbestellung") + " · " +
+    esc(supplier) + ' · <strong>' + esc(volume) + '</strong> · ' +
     esc(orderStatuses[o.status] || o.status) + " · " + date(o.created_at),
     "<p>" + esc(supplierFor(o.supplier_id)) + " · " + progress + "</p>" + orderForm(o) +
     (assigned.length ? "<ul>" + assigned.map(a => "<li>" + esc(data.leads.find(l => l.id === a.lead_id)?.customer_name) + " · " + date(a.assigned_at) + "</li>").join("") + "</ul>" : "") + historyFor("lead_orders",o.id,orderStatuses));
