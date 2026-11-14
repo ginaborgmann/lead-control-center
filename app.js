@@ -681,9 +681,6 @@ document.addEventListener("submit",async event => {
   if (saving) return;
   const values = formData(form);
   const action = form.dataset.action;
-  if (action === "assign" && (!form.hasAttribute("data-quick-direct") || values.manual === "true") && !window.confirm(values.manual === "true"
-    ? "Diesen Lead dem ausgewählten Vertriebspartner manuell zuweisen? Der Einsatzradius wird bei dieser Auswahl nicht geprüft."
-    : "Diesen Lead verbindlich zuweisen?")) return;
   saving = true;
   const button = event.submitter;
   if (button) button.disabled = true;
