@@ -113,7 +113,7 @@ function leads() {
     input("Telefon", "phone", "", 'type="tel"') + input("Lead-Anbieter", "source") + input("Notizen", "notes"), "Lead speichern")) +
     panel('<h2>Alle Leads</h2><div class="controls">' + search("Name, PLZ, Anbieter oder Kontakt") +
     '<select id="lead-status" aria-label="Status filtern">' +
-    options([["", "Alle Status"], ["reonic", "Reonic · Ohne Status"], ["reonic-new", "Reonic · Neue Anfragen"], ...Object.entries(statuses)], filter.status) + '</select>' + btn("Reonic-Anfragen und Teams laden", 'data-command="requests"') + '</div><div id="records"></div>');
+    options([["", "Alle Status"], ["reonic", "Reonic · Ohne Status"], ["reonic-new", "Reonic · Neue Anfragen"], ...Object.entries(statuses)], filter.status) + '</select>' + btn("Direkt zuweisen", 'data-command="quick"') + btn("Reonic-Anfragen und Teams laden", 'data-command="requests"') + '</div><div id="records"></div>');
 }
 function partners() {
   return panel('<h2>Verkäufer verwalten</h2><div class="controls">' + search("Name, PLZ, Kontakt oder Reonic-ID") +
@@ -274,18 +274,34 @@ async function save(action, values, id) {
   }
   fail(result.error);
 }
-async function suggest(id) {
+const skippedLeads = new Set();
+function nextQuickLead() {
+  return data?.leads.filter(l => l.status === "new" &&
+    (!l.reonic_project_id || l.reonic_queue_open) && !skippedLeads.has(l.id))
+    .sort((a,b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))[0];
+}
+async function advanceQuick() {
+  const next = nextQuickLead();
+  if (next) return suggest(next.id,true);
+  $("suggestions").close();
+  message(skippedLeads.size ? "Alle übrigen offenen Leads wurden durchgesehen." : "Keine offenen Leads zur Zuweisung.");
+}
+async function suggest(id, quick = false) {
   const lead = data.leads.find(l => l.id === id);
+  if (!lead) return;
   const dialog = $("suggestions");
   const target = $("suggest-content");
   target.innerHTML = "<h2>" + esc(lead.customer_name) + "</h2><p>Geeignete Verkäufer werden gesucht …</p>";
   dialog.dataset.lead = id;
-  dialog.showModal();
+  dialog.dataset.quick = String(quick);
+  if (!dialog.open) dialog.showModal();
   try {
     const result = await client.rpc("lead_candidates",{p_lead_id:id});
     fail(result.error);
     if (!dialog.open || dialog.dataset.lead !== id) return;
-    target.innerHTML = "<h2>" + esc(lead.customer_name) + " · " + esc(lead.postal_code) + "</h2>" + (
+    const heading = "<h2>" + esc(lead.customer_name) + " · " + esc(lead.postal_code || "PLZ fehlt") + "</h2>" +
+      (quick ? '<div class="controls">' + btn("Überspringen", 'data-command="skip-quick"') + '</div>' : "");
+    target.innerHTML = heading + (
       result.data.length ? result.data.map((p,index) => {
         const available = data.orders.filter(o => o.partner_id === p.partner_id && ["open","in_progress"].includes(o.status));
         const seller = data.partners.find(s => s.id === p.partner_id);
@@ -293,13 +309,15 @@ async function suggest(id) {
         const needsTeam = Boolean(lead.reonic_project_id && (!team || !seller?.reonic_user_id));
         const choice = select("Bestellung", "order_id", [["","Ohne Bestellung"], ...available.map(o => [o.id,
           date(o.created_at) + " · " + supplierFor(o.supplier_id) + " · " + (orderStatuses[o.status] || o.status)])], "");
-        return record((index+1) + ". " + esc(p.full_name) + " · " +
-          p.distance_km.toLocaleString("de-DE",{maximumFractionDigits:2}) + " km Luftlinie · Priorität " + p.priority,
+        return (quick ? '<section class="record"><strong>' : '<details class="record"><summary>') + (index+1) + ". " + esc(p.full_name) + " · " +
+          p.distance_km.toLocaleString("de-DE",{maximumFractionDigits:2}) + " km Luftlinie · Priorität " + p.priority + (quick ? '</strong>' : '</summary>') +
           (lead.reonic_project_id ? "<p>" + (team ? "Reonic-Team: " + esc(team.name) : "Bitte beim Berater zuerst ein Reonic-Team auswählen.") + "</p>" : "") +
-          (needsTeam ? "" : fields("assign", '<input type="hidden" name="partner_id" value="' + esc(p.partner_id) + '">' + choice, "Verbindlich zuweisen",id)));
+          (needsTeam ? "" : fields("assign", '<input type="hidden" name="partner_id" value="' + esc(p.partner_id) + '">' + choice, "Verbindlich zuweisen",id)) + (quick ? '</section>' : '</details>');
       }).join("") : "<p>Keine passenden Verkäufer gefunden. Prüfe Freigabe, Standort-PLZ und Einsatzradien.</p>");
   } catch (error) {
-    target.textContent = "Vorschläge konnten nicht geladen werden. " + error.message;
+    if (dialog.dataset.lead !== id || !dialog.open) return;
+    target.innerHTML = "<p>" + esc("Vorschläge konnten nicht geladen werden. " + error.message) + "</p>" +
+      (quick ? btn("Überspringen", 'data-command="skip-quick"') : "");
   }
 }
 
@@ -337,6 +355,11 @@ document.addEventListener("click",async event => {
     } catch(error) { message(error.message); }
     finally { button.disabled = false; await refresh(); }
   }
+  if (button.dataset.command === "quick") { skippedLeads.clear(); await advanceQuick(); }
+  if (button.dataset.command === "skip-quick" && !saving) {
+    skippedLeads.add($("suggestions").dataset.lead);
+    await advanceQuick();
+  }
   if (button.dataset.command === "suggest") await suggest(button.dataset.id);
   if (button.dataset.command === "sync") {
     button.disabled = true;
@@ -359,9 +382,15 @@ document.addEventListener("submit",async event => {
   if (button) button.disabled = true;
   try {
     await save(action,values,form.dataset.id);
-    if (action === "assign") $("suggestions").close();
+    const dialog = $("suggestions");
+    const quick = action === "assign" && dialog.open && dialog.dataset.quick === "true";
+    if (action === "assign" && !quick) dialog.close();
     message(action === "assign" ? "Lead zugewiesen." : "Gespeichert.");
     await refresh();
+    if (quick && dialog.open) {
+      skippedLeads.add(form.dataset.id);
+      await advanceQuick();
+    }
   } catch(error) {
     if (action === "assign") { $("suggestions").close(); message(error.message); await refresh(); }
     else message(error.message);
