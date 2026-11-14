@@ -153,14 +153,15 @@ function orderForm(o) {
   return fields("order", select("Verkäufer", "partner_id", sellers, o.partner_id) +
     select("Lead-Anbieter", "supplier_id", suppliers, o.supplier_id) +
     select("Bestellart", "order_type", [["once", "Einmalig"], ["weekly", "Wöchentlich"]], o.order_type) +
-    input("Menge", "quantity", o.quantity, 'type="number" min="1" required') +
+    (o.postal_codes_only ? '<p>Hinterlegte PLZ beim Anbieter · Menge offen</p>' : input("Menge", "quantity", o.quantity, 'type="number" min="1" required')) +
     input("Gebiets-PLZ", "postal_code", o.postal_code, zipAttr + " required") +
-    input("Umkreis (km)", "radius_km", o.radius_km, 'type="number" min="0.1" step="0.1" required"') +
+    (o.postal_codes_only ? '' : input("Umkreis als Luftlinie (km)", "radius_km", o.radius_km, 'type="number" min="0.1" step="0.1"') +
+    input("Oder maximale Fahrzeit (Min.)", "max_drive_minutes", o.max_drive_minutes, 'type="number" min="1" step="1"')) +
     select("Status", "status", orderState, o.status) + input("Notizen", "notes", o.notes), "Bestellung speichern", o.id);
 }
 
 function settings() {
-  return panel('<h2>Lead-Verteilung</h2><p>Deutsche PLZ · Luftlinie zwischen PLZ-Mittelpunkten. Es zählen die Entfernung und bei gleicher Entfernung die höhere Priorität. Priorität und Einsatzradius sind pro Verkäufer einstellbar.</p>' +
+  return panel('<h2>Lead-Verteilung</h2><p>Deutsche PLZ · Luftlinie zwischen PLZ-Mittelpunkten. Die Vorschläge sind nach Fahrtweg sortiert. Bei gleichem Fahrtweg zählt die höhere Priorität. Priorität und Einsatzradius sind pro Verkäufer einstellbar.</p>' +
     '<p>Eine Bestellung ist bei der Zuweisung optional.</p><p>PLZ-Daten von <a href="https://www.geonames.org/export/zip/">GeoNames</a>, CC BY 4.0. Je PLZ wurden die Koordinaten der Einträge mit der höchsten Genauigkeitsstufe gemittelt.</p>') +
     panel('<h2>Lead-Anbieter</h2>' + supplierForm({ active: true }) + data.suppliers.map(s => record(esc(s.name), supplierForm(s))).join(""));
 }
@@ -228,7 +229,8 @@ function leadRecord(l) {
   const pending = a && l.reonic_project_id && !a.reonic_synced_at;
   const team = data.teams.find(team => team.id === a?.reonic_team_id);
   const actions = a ? '<p>Zuweisung an ' + esc(nameFor(a.partner_id)) + ' · ' + date(a.assigned_at) +
-    ' · ' + a.distance_km.toLocaleString("de-DE",{maximumFractionDigits:1}) + ' km Luftlinie' +
+    (a.manual ? ' · Manuell zugewiesen' : '') +
+    (a.distance_km == null ? '' : ' · ' + a.distance_km.toLocaleString("de-DE",{maximumFractionDigits:1}) + ' km Luftlinie') +
     (team ? ' · Team ' + esc(team.name) : '') +
     (pending ? '<p>Übertragung an Reonic ausstehend.</p>' + btn("Erneut an Reonic übertragen", 'data-command="retry-reonic" data-id="' + esc(l.id) + '"') : '') +
     (order ? ' · Bestellung vom ' + date(order.created_at) : '') + '</p>' +
@@ -291,9 +293,13 @@ async function save(action, values, id) {
       break;
     case "order": {
       if (values.postal_code && !(await validZip(values.postal_code))) throw Error("Diese deutsche PLZ ist in der Standortliste unbekannt.");
-      const row = {...values, partner_id:optional(values.partner_id), supplier_id:optional(values.supplier_id),
+      const postalCodesOnly = Boolean(data.orders.find(o => o.id === id)?.postal_codes_only);
+      if (!postalCodesOnly && Boolean(values.radius_km) === Boolean(values.max_drive_minutes)) {
+        throw Error("Bitte entweder den Luftlinien-Umkreis oder die maximale Fahrzeit eintragen.");
+      }
+      const row = {...values, max_drive_minutes:values.max_drive_minutes ? Number(values.max_drive_minutes) : null, partner_id:optional(values.partner_id), supplier_id:optional(values.supplier_id),
         postal_code:optional(values.postal_code), radius_km:values.radius_km ? Number(values.radius_km) : null,
-        quantity:Number(values.quantity), notes:optional(values.notes)};
+        quantity:postalCodesOnly ? null : Number(values.quantity), notes:optional(values.notes)};
       result = id ? await client.from("lead_orders").update(row).eq("id",id).select("id").single() : await client.from("lead_orders").insert(row);
       break;
     }
@@ -308,7 +314,7 @@ async function save(action, values, id) {
         await reonicRequests({action:"assign",lead_id:id,...values});
         return;
       }
-      result = await client.from("lead_assignments").insert({lead_id:id,partner_id:values.partner_id,order_id:optional(values.order_id)});
+      result = await client.from("lead_assignments").insert({lead_id:id,partner_id:values.partner_id,order_id:optional(values.order_id),manual:values.manual === "true"});
       if (result.error?.code === "23505") throw Error("Dieser Lead ist bereits zugewiesen. Bitte aktualisieren.");
       break;
     default: throw Error("Unbekannte Aktion.");
@@ -334,6 +340,59 @@ async function advanceQuick(delta = 0) {
   focusId = next.id;
   await suggest(next.id,true);
 }
+function manualPartnerForm(lead) {
+  const partners = data.partners.filter(p => p.active && p.reonic_present &&
+    (!lead.reonic_project_id || (p.reonic_user_id && data.teams.some(t => t.id === p.reonic_team_id && t.active))))
+    .sort((a,b) => a.full_name.localeCompare(b.full_name,"de"));
+  if (!partners.length) return '<div class="focus-other"><h3>Vertriebspartner manuell auswählen</h3><p>Schalte zuerst einen Vertriebspartner frei' +
+    (lead.reonic_project_id ? ' und hinterlege sein Reonic-Team' : '') + '.</p></div>';
+  return '<div class="focus-other"><h3>Vertriebspartner manuell auswählen</h3>' + fields("assign",
+    '<input type="hidden" name="manual" value="true">' +
+    input("Name oder PLZ suchen","partner_search","",'type="search" autocomplete="off" data-manual-search') +
+    select("Vertriebspartner","partner_id",[["","Bitte wählen"],...partners.map(p =>
+      [p.id,p.full_name + " · " + (p.postal_code || p.reonic_postal_code || "PLZ fehlt")])],""),
+    "Manuell zuweisen",lead.id) + '</div>';
+}
+async function byDrivingDistance(lead, candidates) {
+  if (!candidates.length) return {ranked:[], unavailable:0};
+  const zipFor = id => {
+    const partner = data.partners.find(p => p.id === id);
+    return partner?.postal_code || partner?.reonic_postal_code;
+  };
+  const zips = [...new Set([lead.postal_code,...candidates.map(p => zipFor(p.partner_id))].filter(Boolean))];
+  const result = await client.from("de_postal_codes").select("postal_code,longitude,latitude").in("postal_code",zips);
+  fail(result.error);
+  const points = new Map(result.data.map(p => [p.postal_code,p.longitude + "," + p.latitude]));
+  const destination = points.get(lead.postal_code);
+  const routes = new Map();
+  const origins = zips.filter(zip => zip !== lead.postal_code && points.has(zip));
+  if (destination) {
+    if (zips.includes(lead.postal_code)) routes.set(lead.postal_code,{driveKm:0,driveMinutes:0});
+    for (let offset = 0; offset < origins.length; offset += 40) {
+      const batch = origins.slice(offset,offset+40);
+      try {
+        const coordinates = [...batch.map(zip => points.get(zip)),destination].join(";");
+        const response = await fetch("https://router.project-osrm.org/table/v1/driving/" + coordinates +
+          "?destinations=" + batch.length + "&annotations=distance,duration",
+          {signal:AbortSignal.timeout(8000),referrerPolicy:"no-referrer"});
+        if (!response.ok) continue;
+        const matrix = await response.json();
+        batch.forEach((zip,index) => {
+          const metres = matrix.distances?.[index]?.[0];
+          const seconds = matrix.durations?.[index]?.[0];
+          if (Number.isFinite(metres) && Number.isFinite(seconds)) {
+            routes.set(zip,{driveKm:metres/1000,driveMinutes:seconds/60});
+          }
+        });
+      } catch { /* The view reports candidates whose routes could not be calculated. */ }
+    }
+  }
+  const ranked = candidates.flatMap(p => {
+    const route = routes.get(zipFor(p.partner_id));
+    return route ? [{...p,...route}] : [];
+  }).sort((a,b) => a.driveKm-b.driveKm || b.priority-a.priority || a.partner_id.localeCompare(b.partner_id));
+  return {ranked:ranked.slice(0,10),unavailable:candidates.length-ranked.length};
+}
 async function suggest(id, quick = false) {
   const lead = data.leads.find(l => l.id === id);
   if (!lead) return;
@@ -351,6 +410,7 @@ async function suggest(id, quick = false) {
   try {
     const result = await client.rpc("lead_candidates",{p_lead_id:id});
     fail(result.error);
+    const {ranked,unavailable} = await byDrivingDistance(lead,result.data);
     if (!isCurrent()) return;
     const queue = quick ? focusQueue() : [];
     const index = queue.findIndex(row => row.id === id);
@@ -364,7 +424,7 @@ async function suggest(id, quick = false) {
         btn("Weiter →", 'data-command="focus-next" ' + (index >= queue.length - 1 ? "disabled" : "")) +
         '</div><h3>Vertriebspartner direkt zuweisen</h3>' : "");
     target.innerHTML = heading + (
-      result.data.length ? '<div class="' + (quick ? 'focus-suggestions' : 'suggest-cards') + '">' + result.data.map((p,index) => {
+      ranked.length ? '<div class="' + (quick ? 'focus-suggestions' : 'suggest-cards') + '">' + ranked.map((p,index) => {
         const available = data.orders.filter(o => o.partner_id === p.partner_id && ["open","in_progress"].includes(o.status));
         const seller = data.partners.find(s => s.id === p.partner_id);
         const team = data.teams.find(t => t.id === seller?.reonic_team_id && t.active);
@@ -372,10 +432,24 @@ async function suggest(id, quick = false) {
         const choice = select("Bestellung", "order_id", [["","Ohne Bestellung"], ...available.map(o => [o.id,
           date(o.created_at) + " · " + supplierFor(o.supplier_id) + " · " + (orderStatuses[o.status] || o.status)])], "");
         return (quick ? '<section class="record"><strong>' : '<details class="record"><summary>') + (index+1) + ". " + esc(p.full_name) + " · " +
-          p.distance_km.toLocaleString("de-DE",{maximumFractionDigits:2}) + " km Luftlinie · Priorität " + p.priority + (quick ? '</strong>' : '</summary>') +
+          p.distance_km.toLocaleString("de-DE",{maximumFractionDigits:2}) + " km Luftlinie · " + p.driveKm.toLocaleString("de-DE",{maximumFractionDigits:1}) +
+          " km Fahrtweg · ca. " + Math.round(p.driveMinutes) + " Min. Fahrzeit · Priorität " + p.priority + (quick ? '</strong>' : '</summary>') +
           (lead.reonic_project_id ? "<p>" + (team ? "Reonic-Team: " + esc(team.name) : "Bitte beim Berater zuerst ein Reonic-Team auswählen.") + "</p>" : "") +
           (needsTeam ? "" : fields("assign", '<input type="hidden" name="partner_id" value="' + esc(p.partner_id) + '">' + choice, "Verbindlich zuweisen",id)) + (quick ? '</section>' : '</details>');
-      }).join("") + "</div>" : "<p>Keine passenden Verkäufer gefunden. Prüfe Freigabe, Standort-PLZ und Einsatzradien.</p>");
+      }).join("") + "</div>" : "<p>Keine passenden Verkäufer gefunden. Prüfe Freigabe, Standort-PLZ und Einsatzradien.</p>") + (unavailable ? "<p>Für " + unavailable + " geeignete Vertriebspartner war kein Fahrtweg abrufbar.</p>" : "") + manualPartnerForm(lead);
+    const manual = target.querySelector('[data-manual-search]');
+    if (manual) {
+      const partnerSelect = manual.form.elements.partner_id;
+      partnerSelect.required = true;
+      const allOptions = Array.from(partnerSelect.options);
+      manual.addEventListener("input", () => {
+        const query = manual.value.trim().toLocaleLowerCase("de");
+        const selected = partnerSelect.value;
+        partnerSelect.replaceChildren(...allOptions.filter(option =>
+          !option.value || option.textContent.toLocaleLowerCase("de").includes(query)));
+        partnerSelect.value = Array.from(partnerSelect.options).some(option => option.value === selected) ? selected : "";
+      });
+    }
     const contact = await contactLookup;
     if (contact && isCurrent()) {
       const extra = [contact.address,contact.city,contact.email === lead.email ? null : contact.email,contact.phone === lead.phone ? null : contact.phone];
@@ -448,7 +522,9 @@ document.addEventListener("submit",async event => {
   if (saving) return;
   const values = formData(form);
   const action = form.dataset.action;
-  if (action === "assign" && !window.confirm("Diesen Lead verbindlich zuweisen?")) return;
+  if (action === "assign" && !window.confirm(values.manual === "true"
+    ? "Diesen Lead dem ausgewählten Vertriebspartner manuell zuweisen? Der Einsatzradius wird bei dieser Auswahl nicht geprüft."
+    : "Diesen Lead verbindlich zuweisen?")) return;
   saving = true;
   const button = event.submitter;
   if (button) button.disabled = true;

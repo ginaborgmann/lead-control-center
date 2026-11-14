@@ -61,6 +61,8 @@ Deno.serve(async (req) => {
       const normalize = (label: string) => label.toLocaleLowerCase("de-DE").replace(/[^a-z0-9]/g,"");
       const newColumns = columns.data.filter((c: {name:string;archivedAt?:string}) =>
         !c.archivedAt && normalize(c.name) === "neueanfragen").map((c: {id:string}) => c.id);
+      const activeSources = sources.data.filter((source: {archivedAt?: string}) => !source.archivedAt)
+        .map((source: {id:string;name:string}) => ({id:source.id,name:source.name}));
       const labels = new Map<string,string>([["leadnodes","Leadnodes"],["betterbusiness","Better Business"]]);
       const sourceLabels = new Map<string,string>();
       for (const source of sources.data) {
@@ -70,7 +72,7 @@ Deno.serve(async (req) => {
       if (!newColumns.length || new Set(sourceLabels.values()).size !== labels.size) {
         throw Error("Reonic: „Neue Anfragen“, „Leadnodes“ oder „Better Business“ konnte nicht eindeutig gefunden werden.");
       }
-      return {newColumns,sourceLabels};
+      return {newColumns,sourceLabels,activeSources};
     }
     if (body.action === "sync") {
       const teams = await api("teams");
@@ -78,15 +80,16 @@ Deno.serve(async (req) => {
           teams.data.some((team: {id?: unknown; name?: unknown}) => typeof team.id !== "string" || typeof team.name !== "string")) {
         throw Error("Reonic hat keine vollständige Teamliste geliefert.");
       }
-      const teamRows = teams.data.map((team: {id: string; name: string; archivedAt?: string}) =>
-        ({id:team.id,name:team.name,active:!team.archivedAt}));
+      const teamRows = teams.data.map((team: {id: string; name: string; archivedAt?: string; memberIds?: string[]; leaderIds?: string[]; parentId?: string}) =>
+        ({id:team.id,name:team.name,active:!team.archivedAt,member_ids:team.memberIds || [],leader_ids:team.leaderIds || [],parent_id:team.parentId || null}));
       if (teamRows.length) db(await server.from("reonic_teams").upsert(teamRows));
       const prior = db(await server.from("reonic_teams").select("id").eq("active",true));
       const seen = new Set(teamRows.map((team: {id:string}) => team.id));
       const missing = prior.filter((team: {id:string}) => !seen.has(team.id)).map((team: {id:string}) => team.id);
       if (missing.length) db(await server.from("reonic_teams").update({active:false}).in("id",missing));
 
-      const {newColumns,sourceLabels} = await requestScope();
+      const {newColumns,sourceLabels,activeSources} = await requestScope();
+      const supplierCount = db(await server.rpc("sync_reonic_lead_sources",{p_sources:activeSources}));
       const ids = new Set<string>();
       const searches = [
         {columns:"null", sources:null},
@@ -117,7 +120,7 @@ Deno.serve(async (req) => {
         if (!complete) throw Error("Der Abruf hat die maximale Seitenzahl erreicht. Bitte Reonic-Anfragen prüfen.");
       }
       db(await server.rpc("reconcile_reonic_queue",{p_ids:[...ids]}));
-      return reply({success:true,count:ids.size,teams:teamRows.filter((team:{active:boolean})=>team.active).length});
+      return reply({success:true,count:ids.size,suppliers:supplierCount,teams:teamRows.filter((team:{active:boolean})=>team.active).length});
     }
     if (body.action === "contact" && typeof body.lead_id === "string") {
       const lead = db(await server.from("leads").select("reonic_project_id").eq("id",body.lead_id).single());
@@ -154,7 +157,7 @@ Deno.serve(async (req) => {
         }
       }
       const result = await server.rpc("reserve_reonic_assignment",{
-        p_lead:lead.id,p_partner:body.partner_id,p_order:body.order_id || null,p_actor:user.id,
+        p_lead:lead.id,p_partner:body.partner_id,p_order:body.order_id || null,p_actor:user.id,p_manual:body.manual === "true",
       });
       assignment = await readAssignment(server,lead.id);
       if (!assignment) throw Error(result.error?.message || "Die Zuweisung konnte nicht gespeichert werden.");
@@ -165,18 +168,20 @@ Deno.serve(async (req) => {
     if (!partner.active || !partner.reonic_present || !partner.reonic_user_id) {
       throw Error("Der reservierte Berater ist in Reonic nicht mehr verfügbar.");
     }
+    const team = db(await server.from("reonic_teams").select("leader_ids").eq("id",assignment.reonic_team_id).eq("active",true).single());
+    if (!team.leader_ids.length) throw Error("Für dieses Team ist in Reonic kein Teamleiter hinterlegt.");
+    const userIds = [...new Set<string>([partner.reonic_user_id,...team.leader_ids])];
     if ((project.keyAccountManagerId && project.keyAccountManagerId !== partner.reonic_user_id) ||
-        project.assignedUserIds.some((id: string) => id !== partner.reonic_user_id)) {
+        project.assignedUserIds.some((id: string) => !userIds.includes(id))) {
       throw Error("Die Anfrage wurde inzwischen in Reonic einem anderen Berater zugewiesen.");
     }
-    const userIds = [partner.reonic_user_id];
     const teamIds = [...new Set([...project.assignedTeamIds,assignment.reonic_team_id])];
-    if (!project.assignedUserIds.includes(userIds[0]) || !project.assignedTeamIds.includes(assignment.reonic_team_id)) {
+    if (!userIds.every(id => project.assignedUserIds.includes(id)) || !project.assignedTeamIds.includes(assignment.reonic_team_id)) {
       project = await api(path + "/update",{assignedUserIds:userIds,assignedTeamIds:teamIds});
-      if (!project.assignedUserIds?.includes(userIds[0]) || !project.assignedTeamIds?.includes(assignment.reonic_team_id)) {
+      if (!userIds.every(id => project.assignedUserIds?.includes(id)) || !project.assignedTeamIds?.includes(assignment.reonic_team_id)) {
         project = await api(path);
       }
-      if (!project.assignedUserIds?.includes(userIds[0]) || !project.assignedTeamIds?.includes(assignment.reonic_team_id)) {
+      if (!userIds.every(id => project.assignedUserIds?.includes(id)) || !project.assignedTeamIds?.includes(assignment.reonic_team_id)) {
         throw Error("Reonic hat Berater und Team noch nicht bestätigt. Bitte erneut übertragen.");
       }
     }
