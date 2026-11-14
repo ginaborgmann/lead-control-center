@@ -1,0 +1,2 @@
+[functions.reonic-sync-users]
+verify_jwt = false # Auth user and dashboard admin membership are verified in the handler.
