@@ -112,7 +112,17 @@ form.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,2
 #suggestions::backdrop{background:#000a}.aside-foot button{margin-top:12px}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.89.0/dist/umd/supabase.min.js" defer></script>
-</head><body>
+<style>
+.quick-layout{display:grid;grid-template-columns:minmax(190px,1fr) minmax(0,2.6fr);gap:18px}
+.quick-lead .lead-focus-details{display:grid;overflow-wrap:anywhere}
+.quick-suggestions{display:grid;gap:3px}
+.quick-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;align-items:center;gap:8px;padding:3px 8px;border:1px solid #76552a;border-radius:8px}
+.quick-row small{display:block;font-size:11px;color:#d4c5a5}
+.quick-rank{display:grid;place-items:center;min-height:29px;background:#ffca59;color:#221505;border-radius:6px;font-size:17px}
+.quick-action{margin:0}.quick-action .btn{padding:5px 9px;min-height:30px}
+.quick-manual{margin-top:10px}.quick-manual summary,.quick-row summary{cursor:pointer;color:#ffca59}
+@media(max-width:700px){.quick-layout{grid-template-columns:1fr;gap:8px}.quick-lead .lead-focus-details{display:flex}.quick-row{padding:3px 5px}}
+</style></head><body>
 <div id="gb-connect"><form id="login" class="gb-login">
   <div class="gb-brand">G.B</div><h2>Lead Control Center</h2>
   <label>E-Mail<input name="email" type="email" autocomplete="username" required></label>
@@ -132,5 +142,5 @@ form.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,2
   <p id="message" role="status"></p><div id="workspace"></div></main>
 </div>
 <dialog id="suggestions" class="suggest-modal"><div id="suggest-content"></div><form method="dialog"><button class="btn secondary">Schließen</button></form></dialog>
-<script src="app.js?v=automatic-order" defer></script>
+<script src="app.js?v=compact-assignment" defer></script>
 </body></html>
