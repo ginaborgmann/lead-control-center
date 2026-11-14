@@ -80,8 +80,8 @@ Deno.serve(async (req) => {
           teams.data.some((team: {id?: unknown; name?: unknown}) => typeof team.id !== "string" || typeof team.name !== "string")) {
         throw Error("Reonic hat keine vollständige Teamliste geliefert.");
       }
-      const teamRows = teams.data.map((team: {id: string; name: string; archivedAt?: string}) =>
-        ({id:team.id,name:team.name,active:!team.archivedAt}));
+      const teamRows = teams.data.map((team: {id: string; name: string; archivedAt?: string; memberIds?: string[]; leaderIds?: string[]; parentId?: string}) =>
+        ({id:team.id,name:team.name,active:!team.archivedAt,member_ids:team.memberIds || [],leader_ids:team.leaderIds || [],parent_id:team.parentId || null}));
       if (teamRows.length) db(await server.from("reonic_teams").upsert(teamRows));
       const prior = db(await server.from("reonic_teams").select("id").eq("active",true));
       const seen = new Set(teamRows.map((team: {id:string}) => team.id));
