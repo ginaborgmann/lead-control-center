@@ -392,7 +392,19 @@ document.addEventListener("submit",async event => {
       await advanceQuick();
     }
   } catch(error) {
-    if (action === "assign") { $("suggestions").close(); message(error.message); await refresh(); }
+    if (action === "assign") {
+      const dialog = $("suggestions");
+      if (dialog.open && dialog.dataset.quick === "true") {
+        const notice = document.createElement("p");
+        notice.setAttribute("role", "alert");
+        notice.textContent = error.message;
+        $("suggest-content").prepend(notice);
+      } else {
+        dialog.close();
+        message(error.message);
+      }
+      await refresh();
+    }
     else message(error.message);
   } finally {
     saving = false;
