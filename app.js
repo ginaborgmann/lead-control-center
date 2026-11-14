@@ -19,6 +19,25 @@ const orderStatuses = { draft: "Entwurf", open: "Offen", in_progress: "In Bearbe
 const zipAttr = 'inputmode="numeric" pattern="[0-9]{5}" maxlength="5"';
 let client, view = "dashboard", data, refreshVersion = 0, recovery = false;
 const filter = { leads: "", partners: "", orders: "", status: "" };
+async function reonicRequests(body) {
+  const result = await client.functions.invoke("reonic-requests",{body});
+  if (result.error) {
+    const details = await result.error.context?.json?.().catch(() => null);
+    throw Error(details?.error || result.error.message);
+  }
+  return result.data;
+}
+let importing = false;
+async function importRequests(showCount = false) {
+  if (importing) return;
+  importing = true;
+  try {
+    const result = await reonicRequests({action:"sync"});
+    if (showCount) message(result.count + " Reonic-Anfragen · " + result.teams + " Teams abgerufen.");
+    await refresh();
+  } catch (error) { message("Reonic-Abruf: " + error.message); }
+  finally { importing = false; }
+}
 let syncError = "";
 
 function message(text) { $("message").textContent = text; }
@@ -39,12 +58,12 @@ async function all(table, key = "id") {
 async function refresh() {
   const version = ++refreshVersion;
   try {
-    const [leads, partners, orders, suppliers, assignments, sync, activity] = await Promise.all([
+    const [leads, partners, orders, suppliers, assignments, sync, activity, teams] = await Promise.all([
       all("leads"), all("sales_partners"), all("lead_orders"), all("lead_suppliers"),
-      all("lead_assignments", "lead_id"), all("reonic_sync_state", "singleton"), all("activity_log")
+      all("lead_assignments", "lead_id"), all("reonic_sync_state", "singleton"), all("activity_log"), all("reonic_teams")
     ]);
     if (version !== refreshVersion) return;
-    data = { leads, partners, orders, suppliers, assignments, sync: sync[0], activity };
+    data = { leads, partners, orders, suppliers, assignments, sync: sync[0], activity, teams };
     $("connection").textContent = "Supabase verbunden";
     render();
   } catch (error) {
@@ -94,7 +113,7 @@ function leads() {
     input("Telefon", "phone", "", 'type="tel"') + input("Lead-Anbieter", "source") + input("Notizen", "notes"), "Lead speichern")) +
     panel('<h2>Alle Leads</h2><div class="controls">' + search("Name, PLZ, Anbieter oder Kontakt") +
     '<select id="lead-status" aria-label="Status filtern">' +
-    options([["", "Alle Status"], ...Object.entries(statuses)], filter.status) + '</select></div><div id="records"></div>');
+    options([["", "Alle Status"], ["reonic", "Reonic · Ohne Status"], ...Object.entries(statuses)], filter.status) + '</select>' + btn("Reonic-Anfragen und Teams laden", 'data-command="requests"') + '</div><div id="records"></div>');
 }
 function partners() {
   return panel('<h2>Verkäufer verwalten</h2><div class="controls">' + search("Name, PLZ, Kontakt oder Reonic-ID") +
@@ -139,7 +158,7 @@ function renderRecords() {
   if (!$("records")) return;
   const lists = {
     leads: () => [...data.leads].sort((a,b) => b.created_at.localeCompare(a.created_at)).filter(l =>
-      (!filter.status || l.status === filter.status) && matches(l.customer_name, l.postal_code, l.source, l.email, l.phone)).map(leadRecord),
+      (!filter.status || (filter.status === "reonic" ? l.reonic_project_id && l.status === "new" : l.status === filter.status)) && matches(l.customer_name, l.postal_code, l.source, l.email, l.phone)).map(leadRecord),
     partners: () => [...data.partners].sort((a,b) => a.full_name.localeCompare(b.full_name, "de")).filter(p =>
       matches(p.full_name, p.postal_code, p.reonic_postal_code, p.email, p.phone, p.reonic_user_id)).map(partnerRecord),
     orders: () => [...data.orders].sort((a,b) => b.created_at.localeCompare(a.created_at)).filter(o =>
@@ -159,12 +178,16 @@ function leadRecord(l) {
   const order = a && data.orders.find(o => o.id === a.order_id);
   const meta = "<p>Erfasst " + date(l.created_at) + " · " + esc([l.email, l.phone, l.source].filter(Boolean).join(" · ")) + "</p>" +
     (l.notes ? "<p>" + esc(l.notes) + "</p>" : "");
+  const pending = a && l.reonic_project_id && !a.reonic_synced_at;
+  const team = data.teams.find(team => team.id === a?.reonic_team_id);
   const actions = a ? '<p>Zuweisung an ' + esc(nameFor(a.partner_id)) + ' · ' + date(a.assigned_at) +
     ' · ' + a.distance_km.toLocaleString("de-DE",{maximumFractionDigits:1}) + ' km Luftlinie' +
+    (team ? ' · Team ' + esc(team.name) : '') +
+    (pending ? '<p>Übertragung an Reonic ausstehend.</p>' + btn("Erneut an Reonic übertragen", 'data-command="retry-reonic" data-id="' + esc(l.id) + '"') : '') +
     (order ? ' · Bestellung vom ' + date(order.created_at) : '') + '</p>' +
     fields("leadStatus", select("Status", "status", Object.entries(statuses).slice(1),l.status), "Status speichern", l.id) :
     btn("Verkäufer vorschlagen", 'data-command="suggest" data-id="' + esc(l.id) + '"');
-  return record(esc(l.customer_name) + " · " + esc(l.postal_code) + " · " + esc(statuses[l.status]), meta + actions + historyFor("leads",l.id,statuses));
+  return record(esc(l.customer_name) + " · " + esc(l.postal_code || "PLZ fehlt") + " · " + esc(pending ? "Reonic-Übertragung ausstehend" : l.reonic_project_id && !a ? "Reonic · Ohne Status" : statuses[l.status]), meta + actions + historyFor("leads",l.id,statuses));
 }
 function partnerRecord(p) {
   const zip = p.postal_code || p.reonic_postal_code;
@@ -174,6 +197,7 @@ function partnerRecord(p) {
     fields("partner", input("Manuelle PLZ", "postal_code", p.postal_code, zipAttr) +
       input("Einsatzradius (km)", "radius_km", p.radius_km, 'type="number" min="0.1" max="2000" step="0.1"') +
       input("Priorität", "priority", p.priority, 'type="number" step="1" required') +
+      select("Reonic-Team", "reonic_team_id", [["","Team auswählen"], ...data.teams.filter(team => team.active || team.id === p.reonic_team_id).map(team => [team.id,team.name + (team.active ? "" : " (archiviert)")])],p.reonic_team_id) +
       select("Freigabe", "active", [["true","Freigeschaltet"],["false","Deaktiviert"]],String(p.active)), "Verkäufer speichern",p.id) + sellerOrders(p));
 }
 function sellerOrders(p) {
@@ -215,7 +239,7 @@ async function save(action, values, id) {
       }
       result = await client.from("sales_partners").update({
         postal_code:optional(values.postal_code), radius_km:values.radius_km ? Number(values.radius_km) : null,
-        priority:Number(values.priority), active:values.active === "true"
+        reonic_team_id:optional(values.reonic_team_id), priority:Number(values.priority), active:values.active === "true"
       }).eq("id",id).select("id").single();
       break;
     case "order": {
@@ -233,6 +257,10 @@ async function save(action, values, id) {
       break;
     }
     case "assign":
+      if (data.leads.find(l => l.id === id)?.reonic_project_id) {
+        await reonicRequests({action:"assign",lead_id:id,...values});
+        return;
+      }
       result = await client.from("lead_assignments").insert({lead_id:id,partner_id:values.partner_id,order_id:optional(values.order_id)});
       if (result.error?.code === "23505") throw Error("Dieser Lead ist bereits zugewiesen. Bitte aktualisieren.");
       break;
@@ -254,11 +282,15 @@ async function suggest(id) {
     target.innerHTML = "<h2>" + esc(lead.customer_name) + " · " + esc(lead.postal_code) + "</h2>" + (
       result.data.length ? result.data.map((p,index) => {
         const available = data.orders.filter(o => o.partner_id === p.partner_id && ["open","in_progress"].includes(o.status));
+        const seller = data.partners.find(s => s.id === p.partner_id);
+        const team = data.teams.find(t => t.id === seller?.reonic_team_id && t.active);
+        const needsTeam = Boolean(lead.reonic_project_id && (!team || !seller?.reonic_user_id));
         const choice = select("Bestellung", "order_id", [["","Ohne Bestellung"], ...available.map(o => [o.id,
           date(o.created_at) + " · " + supplierFor(o.supplier_id) + " · " + (orderStatuses[o.status] || o.status)])], "");
         return record((index+1) + ". " + esc(p.full_name) + " · " +
           p.distance_km.toLocaleString("de-DE",{maximumFractionDigits:2}) + " km Luftlinie · Priorität " + p.priority,
-          fields("assign", '<input type="hidden" name="partner_id" value="' + esc(p.partner_id) + '">' + choice, "Verbindlich zuweisen",id));
+          (lead.reonic_project_id ? "<p>" + (team ? "Reonic-Team: " + esc(team.name) : "Bitte beim Berater zuerst ein Reonic-Team auswählen.") + "</p>" : "") +
+          (needsTeam ? "" : fields("assign", '<input type="hidden" name="partner_id" value="' + esc(p.partner_id) + '">' + choice, "Verbindlich zuweisen",id)));
       }).join("") : "<p>Keine passenden Verkäufer gefunden. Prüfe Freigabe, Standort-PLZ und Einsatzradien.</p>");
   } catch (error) {
     target.textContent = "Vorschläge konnten nicht geladen werden. " + error.message;
@@ -290,6 +322,15 @@ document.addEventListener("click",async event => {
   const button = event.target.closest("button");
   if (!button) return;
   if (button.dataset.view) { view = button.dataset.view; message(""); render(); }
+  if (button.dataset.command === "requests") await importRequests(true);
+  if (button.dataset.command === "retry-reonic") {
+    button.disabled = true;
+    try {
+      await reonicRequests({action:"assign",lead_id:button.dataset.id});
+      message("Berater und Team wurden in Reonic gespeichert.");
+    } catch(error) { message(error.message); }
+    finally { button.disabled = false; await refresh(); }
+  }
   if (button.dataset.command === "suggest") await suggest(button.dataset.id);
   if (button.dataset.command === "sync") {
     button.disabled = true;
@@ -316,7 +357,7 @@ document.addEventListener("submit",async event => {
     message(action === "assign" ? "Lead zugewiesen." : "Gespeichert.");
     await refresh();
   } catch(error) {
-    if (action === "assign") window.alert(error.message);
+    if (action === "assign") { $("suggestions").close(); message(error.message); await refresh(); }
     else message(error.message);
   } finally {
     saving = false;
@@ -351,6 +392,7 @@ async function open(session) {
   $("connection").textContent = "Supabase wird geprüft …";
   message("");
   await refresh();
+  void importRequests();
 }
 function showRecovery() {
   recovery = true;
