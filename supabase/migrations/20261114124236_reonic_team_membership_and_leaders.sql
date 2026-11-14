@@ -1,0 +1,1 @@
+alter table public.reonic_teams add column member_ids text[] not null default '{}', add column leader_ids text[] not null default '{}', add column parent_id text;
