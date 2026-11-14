@@ -1,0 +1,1 @@
+grant insert on public.lead_assignments to service_role;
