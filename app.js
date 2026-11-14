@@ -197,7 +197,7 @@ function renderRecords() {
           (assigned ? esc(l.postal_code || "PLZ fehlt") : btn(esc(l.postal_code || "PLZ fehlt"), 'data-command="suggest" data-id="' + esc(l.id) + '"')) +
           '</td><td>' + esc(l.source) + '</td><td>' +
           (assigned ? esc(nameFor(assignment.partner_id)) + ' · ' + date(assignment.assigned_at) + leadRecord(l) :
-            btn("10 Vorschläge ansehen", 'class="btn secondary" data-command="suggest" data-id="' + esc(l.id) + '"')) +
+            btn("10 Vorschläge ansehen", 'data-command="suggest" data-id="' + esc(l.id) + '"')) +
           '</td></tr>';
       }).join("") || '<tr><td colspan="4" class="empty">Keine passenden Leads gefunden.</td></tr>') +
       '</tbody></table>';
@@ -345,6 +345,9 @@ async function suggest(id, quick = false) {
   dialog.dataset.quick = String(quick);
   if (!quick && !dialog.open) dialog.showModal();
   const isCurrent = () => quick ? $("lead-focus") === target && focusId === id : dialog.open && dialog.dataset.lead === id;
+  const contactLookup = lead.reonic_project_id
+    ? reonicRequests({action:"contact",lead_id:id}).then(result => result.contact).catch(() => null)
+    : Promise.resolve(null);
   try {
     const result = await client.rpc("lead_candidates",{p_lead_id:id});
     fail(result.error);
@@ -355,7 +358,7 @@ async function suggest(id, quick = false) {
       [lead.postal_code || "PLZ fehlt",lead.source,lead.email,lead.phone].filter(Boolean)
         .map(item => '<span>' + esc(item) + '</span>').join("") + '</div>';
     const heading = (quick ? '<div class="lead-focus-count">Lead ' + (index + 1) + ' von ' + queue.length + '</div>' : '') +
-      '<h2 class="lead-focus-name">' + esc(lead.customer_name) + '</h2>' + details +
+      '<h2 class="lead-focus-name">' + esc(lead.customer_name) + '</h2>' + details + '<div class="lead-focus-details" data-contact></div>' +
       (quick ? '<div class="lead-focus-actions">' +
         btn("← Zurück", 'data-command="focus-prev" ' + (index <= 0 ? "disabled" : "")) +
         btn("Weiter →", 'data-command="focus-next" ' + (index >= queue.length - 1 ? "disabled" : "")) +
@@ -373,6 +376,11 @@ async function suggest(id, quick = false) {
           (lead.reonic_project_id ? "<p>" + (team ? "Reonic-Team: " + esc(team.name) : "Bitte beim Berater zuerst ein Reonic-Team auswählen.") + "</p>" : "") +
           (needsTeam ? "" : fields("assign", '<input type="hidden" name="partner_id" value="' + esc(p.partner_id) + '">' + choice, "Verbindlich zuweisen",id)) + (quick ? '</section>' : '</details>');
       }).join("") + "</div>" : "<p>Keine passenden Verkäufer gefunden. Prüfe Freigabe, Standort-PLZ und Einsatzradien.</p>");
+    const contact = await contactLookup;
+    if (contact && isCurrent()) {
+      const extra = [contact.address,contact.city,contact.email === lead.email ? null : contact.email,contact.phone === lead.phone ? null : contact.phone];
+      target.querySelector("[data-contact]").innerHTML = extra.filter(Boolean).map(value => "<span>" + esc(value) + "</span>").join("");
+    }
   } catch (error) {
     if (!isCurrent()) return;
     target.innerHTML = "<p>" + esc("Vorschläge konnten nicht geladen werden. " + error.message) + "</p>" +
