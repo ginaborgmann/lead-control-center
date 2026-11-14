@@ -61,6 +61,8 @@ Deno.serve(async (req) => {
       const normalize = (label: string) => label.toLocaleLowerCase("de-DE").replace(/[^a-z0-9]/g,"");
       const newColumns = columns.data.filter((c: {name:string;archivedAt?:string}) =>
         !c.archivedAt && normalize(c.name) === "neueanfragen").map((c: {id:string}) => c.id);
+      const activeSources = sources.data.filter((source: {archivedAt?: string}) => !source.archivedAt)
+        .map((source: {id:string;name:string}) => ({id:source.id,name:source.name}));
       const labels = new Map<string,string>([["leadnodes","Leadnodes"],["betterbusiness","Better Business"]]);
       const sourceLabels = new Map<string,string>();
       for (const source of sources.data) {
@@ -70,7 +72,7 @@ Deno.serve(async (req) => {
       if (!newColumns.length || new Set(sourceLabels.values()).size !== labels.size) {
         throw Error("Reonic: „Neue Anfragen“, „Leadnodes“ oder „Better Business“ konnte nicht eindeutig gefunden werden.");
       }
-      return {newColumns,sourceLabels};
+      return {newColumns,sourceLabels,activeSources};
     }
     if (body.action === "sync") {
       const teams = await api("teams");
@@ -86,7 +88,8 @@ Deno.serve(async (req) => {
       const missing = prior.filter((team: {id:string}) => !seen.has(team.id)).map((team: {id:string}) => team.id);
       if (missing.length) db(await server.from("reonic_teams").update({active:false}).in("id",missing));
 
-      const {newColumns,sourceLabels} = await requestScope();
+      const {newColumns,sourceLabels,activeSources} = await requestScope();
+      const supplierCount = db(await server.rpc("sync_reonic_lead_sources",{p_sources:activeSources}));
       const ids = new Set<string>();
       const searches = [
         {columns:"null", sources:null},
@@ -117,7 +120,7 @@ Deno.serve(async (req) => {
         if (!complete) throw Error("Der Abruf hat die maximale Seitenzahl erreicht. Bitte Reonic-Anfragen prüfen.");
       }
       db(await server.rpc("reconcile_reonic_queue",{p_ids:[...ids]}));
-      return reply({success:true,count:ids.size,teams:teamRows.filter((team:{active:boolean})=>team.active).length});
+      return reply({success:true,count:ids.size,suppliers:supplierCount,teams:teamRows.filter((team:{active:boolean})=>team.active).length});
     }
     if (body.action === "contact" && typeof body.lead_id === "string") {
       const lead = db(await server.from("leads").select("reonic_project_id").eq("id",body.lead_id).single());
