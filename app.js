@@ -18,7 +18,7 @@ const statuses = { new: "Neu", assigned: "Zugewiesen", in_progress: "In Bearbeit
 const orderStatuses = { draft: "Entwurf", open: "Offen", in_progress: "In Bearbeitung", completed: "Abgeschlossen", cancelled: "Storniert" };
 const zipAttr = 'inputmode="numeric" pattern="[0-9]{5}" maxlength="5"';
 let client, view = "dashboard", data, refreshVersion = 0, recovery = false;
-const filter = { leads: "", partners: "", orders: "", status: "", orderSort: "az", orderSupplier: "" };
+const filter = { leads: "", partners: "", orders: "", status: "", orderSort: "az", orderSupplier: "", partnerPostalView: "with" };
 async function reonicRequests(body) {
   const result = await client.functions.invoke("reonic-requests",{body});
   if (result.error) {
@@ -185,9 +185,17 @@ function leads() {
 function isOpenLead(lead) {
   return lead.status === "new" && (!lead.reonic_project_id || lead.reonic_queue_open);
 }
+function matchesPartnerPostalView(partner) {
+  if (filter.partnerPostalView === "all") return true;
+  if (!partner.reonic_present || !partner.reonic_user_id) return false;
+  const hasPostalCode = Boolean(partner.postal_code?.trim() || partner.reonic_postal_code?.trim());
+  return filter.partnerPostalView === "with" ? hasPostalCode : !hasPostalCode;
+}
 function partners() {
   return panel('<h2>Verkäufer verwalten</h2><div class="controls">' + search("Name, PLZ, Kontakt oder Reonic-ID") +
-    btn("Reonic synchronisieren", 'data-command="sync"') + '</div><p>' + syncStatus() + '</p><div id="records"></div>');
+    '<label>PLZ-Liste <select id="partner-postal-view">' +
+    options([["with","Mit PLZ"],["without","Ohne PLZ"],["all","Alle Profile verwalten"]],filter.partnerPostalView) +
+    '</select></label>' + btn("Reonic synchronisieren", 'data-command="sync"') + '</div><p>' + syncStatus() + '</p><div id="records"></div>');
 }
 
 function orders() {
@@ -265,6 +273,7 @@ function renderRecords() {
     leads: () => [...data.leads].sort((a,b) => b.created_at.localeCompare(a.created_at)).filter(l =>
       matchesLeadStatus(l) && matches(l.customer_name, l.postal_code, l.source, l.email, l.phone)).map(leadRecord),
     partners: () => [...data.partners].sort((a,b) => a.full_name.localeCompare(b.full_name, "de")).filter(p =>
+      matchesPartnerPostalView(p) &&
       matches(p.full_name, p.postal_code, p.reonic_postal_code, p.email, p.phone, p.reonic_user_id)).map(partnerRecord),
     orders: () => {
       const visible = data.orders.filter(o =>
@@ -627,7 +636,7 @@ document.addEventListener("input",event => {
   renderRecords();
 });
 $("workspace").addEventListener("change",event => {
-  const fields = {"lead-status":"status","order-sort":"orderSort","order-supplier":"orderSupplier"};
+  const fields = {"lead-status":"status","order-sort":"orderSort","order-supplier":"orderSupplier","partner-postal-view":"partnerPostalView"};
   const field = fields[event.target.id];
   if (!field) return;
   filter[field] = event.target.value;
