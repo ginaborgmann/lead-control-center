@@ -109,9 +109,12 @@ function weekStart(value) {
 function confirmed(a) {
   return Boolean(a.reonic_synced_at || !data.leads.find(l => l.id === a.lead_id)?.reonic_project_id);
 }
+function assignmentsInWeek(week) {
+  return data.assignments.filter(a => confirmed(a) && weekStart(a.reonic_synced_at || a.assigned_at) === week);
+}
 function weeklySummary() {
   const week = weekStart(Date.now());
-  const current = data.assignments.filter(a => confirmed(a) && weekStart(a.reonic_synced_at || a.assigned_at) === week);
+  const current = assignmentsInWeek(week);
   const activeOrders = data.orders.filter(o => o.order_type === "weekly" && ["open","in_progress"].includes(o.status));
   const ids = new Set([...activeOrders.map(o => o.supplier_id),...current.map(a => a.supplier_id || data.orders.find(o => o.id === a.order_id)?.supplier_id)]);
   const rows = [...ids].map(id => {
@@ -468,7 +471,7 @@ function bindOrderChoices(target) {
     update();
   }
 }
-function compactSuggestion(lead,partner,index) {
+function compactSuggestion(lead,partner,index,weeklyCount) {
   const source = sourceForLead(lead);
   const matching = orderOptions(partner.partner_id,source);
   const hidden = (name,value) => '<input type="hidden" name="' + name + '" value="' + esc(value) + '">';
@@ -482,7 +485,8 @@ function compactSuggestion(lead,partner,index) {
   const route = partner.driveKm == null ? "Fahrtweg nicht verfügbar" :
     km(partner.driveKm) + ' km Fahrtweg · ' + Math.round(partner.driveMinutes) + ' Min.';
   return '<div class="quick-row"><strong class="quick-rank" aria-label="Platz ' + (index+1) + '">' + (index+1) +
-    '</strong><div><strong>' + esc(partner.full_name) + '</strong><small>' + route + ' · ' +
+    '</strong><div><strong>' + esc(partner.full_name) + '</strong><span class="quick-week-count">' + weeklyCount + ' ' +
+    (weeklyCount === 1 ? 'Lead' : 'Leads') + ' diese Woche</span><small>' + route + ' · ' +
     km(partner.distance_km) + ' km Luftlinie' + (partner.outside_radius ? ' · Außerhalb Einsatzradius' : '') +
     '</small></div>' + (extra ? '<details><summary>Zuweisen</summary>' + form + '</details>' : form) + '</div>';
 }
@@ -506,6 +510,12 @@ async function suggest(id, quick = false) {
     const candidates = quick ? result.data.slice(0,40) : result.data;
     const {ranked,unavailable} = await byDrivingDistance(lead,candidates);
     if (!isCurrent()) return;
+    const weeklyCounts = new Map();
+    if (quick) {
+      for (const assignment of assignmentsInWeek(weekStart(Date.now()))) {
+        weeklyCounts.set(assignment.partner_id,(weeklyCounts.get(assignment.partner_id) || 0) + 1);
+      }
+    }
     const queue = quick ? focusQueue() : [];
     const index = queue.findIndex(row => row.id === id);
     const details = '<div class="lead-focus-details">' +
@@ -519,7 +529,7 @@ async function suggest(id, quick = false) {
         '</div>' : "");
     target.innerHTML = (quick ? '<div class="quick-layout"><div class="quick-lead">' + heading + '</div><div>' : heading) + (
       ranked.length ? '<div class="' + (quick ? 'quick-suggestions' : 'suggest-cards') + '">' + ranked.map((p,index) => {
-        if (quick) return compactSuggestion(lead,p,index);
+        if (quick) return compactSuggestion(lead,p,index,weeklyCounts.get(p.partner_id) || 0);
         const seller = data.partners.find(s => s.id === p.partner_id);
         const team = data.teams.find(t => t.id === seller?.reonic_team_id && t.active);
         const needsTeam = Boolean(lead.reonic_project_id && (!seller?.reonic_user_id || (!seller.reonic_team_optional && !team?.leader_ids.length)));
