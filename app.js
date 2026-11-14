@@ -85,6 +85,7 @@ function render() {
   const views = { dashboard, leads, partners, orders, settings };
   $("workspace").innerHTML = views[view]();
   renderRecords();
+  if ($("lead-focus")) void advanceQuick();
 }
 
 function panel(content) { return '<section class="panel">' + content + '</section>'; }
@@ -107,13 +108,32 @@ function dashboard() {
     '</div>' + panel('<h2>Verbindungen</h2><p>Supabase verbunden</p><p>' + syncStatus() + '</p>');
 }
 
+let leadTab = "open";
+let leadMode = "list";
+
 function leads() {
-  return panel('<h2>Neuen Lead erfassen</h2>' + fields("lead", input("Kundenname", "customer_name", "", 'required maxlength="250"') +
+  const openCount = data.leads.filter(isOpenLead).length;
+  const assignedCount = data.assignments.length;
+  return panel('<div class="panel-head"><h2>Leads zur Zuweisung</h2>' +
+    btn("+ Lead hinzufügen", 'data-command="new-lead"') + '</div><div id="new-lead" hidden>' + fields("lead", input("Kundenname", "customer_name", "", 'required maxlength="250"') +
     input("Deutsche PLZ", "postal_code", "", zipAttr + " required") + input("E-Mail", "email", "", 'type="email"') +
-    input("Telefon", "phone", "", 'type="tel"') + input("Lead-Anbieter", "source") + input("Notizen", "notes"), "Lead speichern")) +
-    panel('<h2>Alle Leads</h2><div class="controls">' + search("Name, PLZ, Anbieter oder Kontakt") +
-    '<select id="lead-status" aria-label="Status filtern">' +
-    options([["", "Alle Status"], ["reonic", "Reonic · Ohne Status"], ["reonic-new", "Reonic · Neue Anfragen"], ...Object.entries(statuses)], filter.status) + '</select>' + btn("Direkt zuweisen", 'data-command="quick"') + btn("Reonic-Anfragen und Teams laden", 'data-command="requests"') + '</div><div id="records"></div>');
+    input("Telefon", "phone", "", 'type="tel"') + input("Lead-Anbieter", "source") + input("Notizen", "notes"), "Lead speichern")+
+    '</div><div class="lead-tabs">' +
+    '<button class="lead-tab ' + (leadTab === "open" ? "active" : "") + '" data-command="open-leads">Offene Leads (' + openCount + ')</button>' +
+    '<button class="lead-tab ' + (leadTab === "assigned" ? "active" : "") + '" data-command="assigned-leads">Zugewiesen (' + assignedCount + ')</button>' +
+    btn("Reonic-Anfragen und Teams laden", 'data-command="requests"') + '</div>' +
+    (leadTab === "open" ? '<div class="lead-mode-switch">' +
+      '<button class="lead-tab ' + (leadMode === "list" ? "active" : "") + '" data-command="lead-list">☷ Listenansicht</button>' +
+      '<button class="lead-tab ' + (leadMode === "focus" ? "active" : "") + '" data-command="quick">▣ Einzeln zuweisen</button></div>' : '') +
+    (leadTab === "open" && leadMode === "focus" ? '<div id="lead-focus" class="lead-focus-card"></div>' :
+      '<div class="toolbar">' + search("Lead, PLZ oder Leadanbieter suchen …") +
+      '<select id="lead-status" aria-label="Status filtern">' +
+      options(leadTab === "open" ? [["","Alle offenen Leads"],["reonic","Reonic · Ohne Status"],["reonic-new","Reonic · Neue Anfragen"]] :
+        [["","Alle Zuweisungen"],...Object.entries(statuses).slice(1)],filter.status) +
+      '</select></div><div id="records" class="table-wrap"></div>'));
+}
+function isOpenLead(lead) {
+  return lead.status === "new" && (!lead.reonic_project_id || lead.reonic_queue_open);
 }
 function partners() {
   return panel('<h2>Verkäufer verwalten</h2><div class="controls">' + search("Name, PLZ, Kontakt oder Reonic-ID") +
@@ -162,6 +182,27 @@ function matchesLeadStatus(lead) {
 }
 function renderRecords() {
   if (!$("records")) return;
+  if (view === "leads") {
+    const assigned = leadTab === "assigned";
+    const list = data.leads.filter(l => (assigned ? Boolean(data.assignments.find(a => a.lead_id === l.id)) : isOpenLead(l)) &&
+      matchesLeadStatus(l) && matches(l.customer_name,l.postal_code,l.source,l.email,l.phone));
+    list.sort((a,b) => b.created_at.localeCompare(a.created_at));
+    $("records").innerHTML = '<table><thead><tr><th>Lead / Kundenkontakt</th><th>PLZ' +
+      (assigned ? '' : ' · Vorschläge') + '</th><th>Leadanbieter / Quelle</th><th>' +
+      (assigned ? 'Zugewiesen an / Datum' : 'Aktion') + '</th></tr></thead><tbody>' +
+      (list.map(l => {
+        const assignment = data.assignments.find(a => a.lead_id === l.id);
+        return '<tr><td><strong>' + esc(l.customer_name) + '</strong><div class="tiny">' +
+          esc([l.email,l.phone].filter(Boolean).join(" · ")) + '</div></td><td>' +
+          (assigned ? esc(l.postal_code || "PLZ fehlt") : btn(esc(l.postal_code || "PLZ fehlt"), 'data-command="suggest" data-id="' + esc(l.id) + '"')) +
+          '</td><td>' + esc(l.source) + '</td><td>' +
+          (assigned ? esc(nameFor(assignment.partner_id)) + ' · ' + date(assignment.assigned_at) + leadRecord(l) :
+            btn("10 Vorschläge ansehen", 'class="btn secondary" data-command="suggest" data-id="' + esc(l.id) + '"')) +
+          '</td></tr>';
+      }).join("") || '<tr><td colspan="4" class="empty">Keine passenden Leads gefunden.</td></tr>') +
+      '</tbody></table>';
+    return;
+  }
   const lists = {
     leads: () => [...data.leads].sort((a,b) => b.created_at.localeCompare(a.created_at)).filter(l =>
       matchesLeadStatus(l) && matches(l.customer_name, l.postal_code, l.source, l.email, l.phone)).map(leadRecord),
@@ -274,35 +315,53 @@ async function save(action, values, id) {
   }
   fail(result.error);
 }
-const skippedLeads = new Set();
-function nextQuickLead() {
-  return data?.leads.filter(l => l.status === "new" &&
-    (!l.reonic_project_id || l.reonic_queue_open) && !skippedLeads.has(l.id))
-    .sort((a,b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))[0];
+let focusId = null;
+function focusQueue() {
+  return data?.leads.filter(isOpenLead).sort((a,b) =>
+    a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id)) || [];
 }
-async function advanceQuick() {
-  const next = nextQuickLead();
-  if (next) return suggest(next.id,true);
-  $("suggestions").close();
-  message(skippedLeads.size ? "Alle übrigen offenen Leads wurden durchgesehen." : "Keine offenen Leads zur Zuweisung.");
+async function advanceQuick(delta = 0) {
+  const target = $("lead-focus");
+  if (!target) return;
+  const queue = focusQueue();
+  const index = queue.findIndex(l => l.id === focusId);
+  const next = queue[Math.max(0,Math.min(queue.length - 1,index + delta))];
+  if (!next) {
+    focusId = null;
+    target.innerHTML = '<h2>Alle offenen Leads erledigt</h2>';
+    return;
+  }
+  focusId = next.id;
+  await suggest(next.id,true);
 }
 async function suggest(id, quick = false) {
   const lead = data.leads.find(l => l.id === id);
   if (!lead) return;
   const dialog = $("suggestions");
-  const target = $("suggest-content");
+  const target = $(quick ? "lead-focus" : "suggest-content");
+  if (!target) return;
   target.innerHTML = "<h2>" + esc(lead.customer_name) + "</h2><p>Geeignete Verkäufer werden gesucht …</p>";
   dialog.dataset.lead = id;
   dialog.dataset.quick = String(quick);
-  if (!dialog.open) dialog.showModal();
+  if (!quick && !dialog.open) dialog.showModal();
+  const isCurrent = () => quick ? $("lead-focus") === target && focusId === id : dialog.open && dialog.dataset.lead === id;
   try {
     const result = await client.rpc("lead_candidates",{p_lead_id:id});
     fail(result.error);
-    if (!dialog.open || dialog.dataset.lead !== id) return;
-    const heading = "<h2>" + esc(lead.customer_name) + " · " + esc(lead.postal_code || "PLZ fehlt") + "</h2>" +
-      (quick ? '<div class="controls">' + btn("Überspringen", 'data-command="skip-quick"') + '</div>' : "");
+    if (!isCurrent()) return;
+    const queue = quick ? focusQueue() : [];
+    const index = queue.findIndex(row => row.id === id);
+    const details = '<div class="lead-focus-details">' +
+      [lead.postal_code || "PLZ fehlt",lead.source,lead.email,lead.phone].filter(Boolean)
+        .map(item => '<span>' + esc(item) + '</span>').join("") + '</div>';
+    const heading = (quick ? '<div class="lead-focus-count">Lead ' + (index + 1) + ' von ' + queue.length + '</div>' : '') +
+      '<h2 class="lead-focus-name">' + esc(lead.customer_name) + '</h2>' + details +
+      (quick ? '<div class="lead-focus-actions">' +
+        btn("← Zurück", 'data-command="focus-prev" ' + (index <= 0 ? "disabled" : "")) +
+        btn("Weiter →", 'data-command="focus-next" ' + (index >= queue.length - 1 ? "disabled" : "")) +
+        '</div><h3>Vertriebspartner direkt zuweisen</h3>' : "");
     target.innerHTML = heading + (
-      result.data.length ? result.data.map((p,index) => {
+      result.data.length ? '<div class="' + (quick ? 'focus-suggestions' : 'suggest-cards') + '">' + result.data.map((p,index) => {
         const available = data.orders.filter(o => o.partner_id === p.partner_id && ["open","in_progress"].includes(o.status));
         const seller = data.partners.find(s => s.id === p.partner_id);
         const team = data.teams.find(t => t.id === seller?.reonic_team_id && t.active);
@@ -313,11 +372,11 @@ async function suggest(id, quick = false) {
           p.distance_km.toLocaleString("de-DE",{maximumFractionDigits:2}) + " km Luftlinie · Priorität " + p.priority + (quick ? '</strong>' : '</summary>') +
           (lead.reonic_project_id ? "<p>" + (team ? "Reonic-Team: " + esc(team.name) : "Bitte beim Berater zuerst ein Reonic-Team auswählen.") + "</p>" : "") +
           (needsTeam ? "" : fields("assign", '<input type="hidden" name="partner_id" value="' + esc(p.partner_id) + '">' + choice, "Verbindlich zuweisen",id)) + (quick ? '</section>' : '</details>');
-      }).join("") : "<p>Keine passenden Verkäufer gefunden. Prüfe Freigabe, Standort-PLZ und Einsatzradien.</p>");
+      }).join("") + "</div>" : "<p>Keine passenden Verkäufer gefunden. Prüfe Freigabe, Standort-PLZ und Einsatzradien.</p>");
   } catch (error) {
-    if (dialog.dataset.lead !== id || !dialog.open) return;
+    if (!isCurrent()) return;
     target.innerHTML = "<p>" + esc("Vorschläge konnten nicht geladen werden. " + error.message) + "</p>" +
-      (quick ? btn("Überspringen", 'data-command="skip-quick"') : "");
+      (quick ? btn("Weiter →", 'data-command="focus-next"') : "");
   }
 }
 
@@ -355,11 +414,16 @@ document.addEventListener("click",async event => {
     } catch(error) { message(error.message); }
     finally { button.disabled = false; await refresh(); }
   }
-  if (button.dataset.command === "quick") { skippedLeads.clear(); await advanceQuick(); }
-  if (button.dataset.command === "skip-quick" && !saving) {
-    skippedLeads.add($("suggestions").dataset.lead);
-    await advanceQuick();
+  if (button.dataset.command === "new-lead") $("new-lead").hidden = !$("new-lead").hidden;
+  if (["open-leads","assigned-leads","lead-list","quick"].includes(button.dataset.command)) {
+    leadTab = button.dataset.command === "assigned-leads" ? "assigned" : "open";
+    leadMode = button.dataset.command === "quick" ? "focus" : "list";
+    filter.status = "";
+    focusId = null;
+    render();
   }
+  if (!saving && button.dataset.command === "focus-prev") await advanceQuick(-1);
+  if (!saving && button.dataset.command === "focus-next") await advanceQuick(1);
   if (button.dataset.command === "suggest") await suggest(button.dataset.id);
   if (button.dataset.command === "sync") {
     button.disabled = true;
@@ -381,20 +445,24 @@ document.addEventListener("submit",async event => {
   const button = event.submitter;
   if (button) button.disabled = true;
   try {
+    const quick = action === "assign" && Boolean(form.closest("#lead-focus"));
+    if (quick) {
+      const queue = focusQueue();
+      const i = queue.findIndex(l => l.id === form.dataset.id);
+      focusId = queue[i + 1]?.id || queue[i - 1]?.id || null;
+    }
     await save(action,values,form.dataset.id);
     const dialog = $("suggestions");
-    const quick = action === "assign" && dialog.open && dialog.dataset.quick === "true";
     if (action === "assign" && !quick) dialog.close();
     message(action === "assign" ? "Lead zugewiesen." : "Gespeichert.");
     await refresh();
-    if (quick && dialog.open) {
-      skippedLeads.add(form.dataset.id);
-      await advanceQuick();
-    }
   } catch(error) {
     if (action === "assign") {
       const dialog = $("suggestions");
-      if (dialog.open && dialog.dataset.quick === "true") {
+      if (form.closest("#lead-focus")) {
+        focusId = form.dataset.id;
+        message(error.message);
+      } else if (dialog.open && dialog.dataset.quick === "true") {
         const notice = document.createElement("p");
         notice.setAttribute("role", "alert");
         notice.textContent = error.message;
