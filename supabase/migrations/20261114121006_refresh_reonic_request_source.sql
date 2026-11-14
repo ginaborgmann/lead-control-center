@@ -1,0 +1,1 @@
+grant update (source,customer_name,postal_code,email,phone) on public.leads to service_role;
