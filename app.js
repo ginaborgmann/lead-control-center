@@ -153,10 +153,10 @@ function orderForm(o) {
   return fields("order", select("Verkäufer", "partner_id", sellers, o.partner_id) +
     select("Lead-Anbieter", "supplier_id", suppliers, o.supplier_id) +
     select("Bestellart", "order_type", [["once", "Einmalig"], ["weekly", "Wöchentlich"]], o.order_type) +
-    input("Menge", "quantity", o.quantity, 'type="number" min="1" required') +
+    (o.postal_codes_only ? '<p>Hinterlegte PLZ beim Anbieter · Menge offen</p>' : input("Menge", "quantity", o.quantity, 'type="number" min="1" required')) +
     input("Gebiets-PLZ", "postal_code", o.postal_code, zipAttr + " required") +
-    input("Umkreis als Luftlinie (km)", "radius_km", o.radius_km, 'type="number" min="0.1" step="0.1"') +
-    input("Oder maximale Fahrzeit (Min.)", "max_drive_minutes", o.max_drive_minutes, 'type="number" min="1" step="1"') +
+    (o.postal_codes_only ? '' : input("Umkreis als Luftlinie (km)", "radius_km", o.radius_km, 'type="number" min="0.1" step="0.1"') +
+    input("Oder maximale Fahrzeit (Min.)", "max_drive_minutes", o.max_drive_minutes, 'type="number" min="1" step="1"')) +
     select("Status", "status", orderState, o.status) + input("Notizen", "notes", o.notes), "Bestellung speichern", o.id);
 }
 
@@ -293,12 +293,13 @@ async function save(action, values, id) {
       break;
     case "order": {
       if (values.postal_code && !(await validZip(values.postal_code))) throw Error("Diese deutsche PLZ ist in der Standortliste unbekannt.");
-      if (Boolean(values.radius_km) === Boolean(values.max_drive_minutes)) {
+      const postalCodesOnly = Boolean(data.orders.find(o => o.id === id)?.postal_codes_only);
+      if (!postalCodesOnly && Boolean(values.radius_km) === Boolean(values.max_drive_minutes)) {
         throw Error("Bitte entweder den Luftlinien-Umkreis oder die maximale Fahrzeit eintragen.");
       }
       const row = {...values, max_drive_minutes:values.max_drive_minutes ? Number(values.max_drive_minutes) : null, partner_id:optional(values.partner_id), supplier_id:optional(values.supplier_id),
         postal_code:optional(values.postal_code), radius_km:values.radius_km ? Number(values.radius_km) : null,
-        quantity:Number(values.quantity), notes:optional(values.notes)};
+        quantity:postalCodesOnly ? null : Number(values.quantity), notes:optional(values.notes)};
       result = id ? await client.from("lead_orders").update(row).eq("id",id).select("id").single() : await client.from("lead_orders").insert(row);
       break;
     }
