@@ -88,6 +88,7 @@ Deno.serve(async (req) => {
       const missing = prior.filter((team: {id:string}) => !seen.has(team.id)).map((team: {id:string}) => team.id);
       if (missing.length) db(await server.from("reonic_teams").update({active:false}).in("id",missing));
 
+      const linkedTeams = db(await server.rpc("fill_reonic_partner_teams"));
       const {newColumns,sourceLabels,activeSources} = await requestScope();
       const supplierCount = db(await server.rpc("sync_reonic_lead_sources",{p_sources:activeSources}));
       const ids = new Set<string>();
@@ -120,7 +121,7 @@ Deno.serve(async (req) => {
         if (!complete) throw Error("Der Abruf hat die maximale Seitenzahl erreicht. Bitte Reonic-Anfragen prüfen.");
       }
       db(await server.rpc("reconcile_reonic_queue",{p_ids:[...ids]}));
-      return reply({success:true,count:ids.size,suppliers:supplierCount,teams:teamRows.filter((team:{active:boolean})=>team.active).length});
+      return reply({success:true,count:ids.size,suppliers:supplierCount,linkedTeams,teams:teamRows.filter((team:{active:boolean})=>team.active).length});
     }
     if (body.action === "contact" && typeof body.lead_id === "string") {
       const lead = db(await server.from("leads").select("reonic_project_id").eq("id",body.lead_id).single());
