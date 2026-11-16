@@ -1,0 +1,1 @@
+alter table public.lead_orders add column area_name text check (char_length(btrim(area_name)) between 1 and 100);
