@@ -565,9 +565,12 @@ function compactSuggestion(lead,partner,index,weeklyCount) {
   const km = value => value.toLocaleString("de-DE",{maximumFractionDigits:1});
   const route = partner.driveKm == null ? "Fahrtweg nicht verfügbar" :
     km(partner.driveKm) + ' km Fahrtweg · ' + Math.round(partner.driveMinutes) + ' Min.';
-  return '<div class="quick-row"><strong class="quick-rank" aria-label="Platz ' + (index+1) + '">' + (index+1) +
+  const inside = !partner.outside_radius;
+  const routeText = '<span class="quick-route' + (inside && partner.driveKm != null ? ' quick-route-inside' : '') +
+    '">' + route + '</span>';
+  return '<div class="quick-row' + (inside ? ' quick-row-inside' : '') + '"><strong class="quick-rank" aria-label="Platz ' + (index+1) + '">' + (index+1) +
     '</strong><div><strong>' + esc(partner.full_name) + '</strong><span class="quick-week-count">' + weeklyCount + ' ' +
-    (weeklyCount === 1 ? 'Lead' : 'Leads') + ' diese Woche</span><small>' + route + ' · ' +
+    (weeklyCount === 1 ? 'Lead' : 'Leads') + ' diese Woche</span><small>' + routeText + ' · ' +
     km(partner.distance_km) + ' km Luftlinie' + (partner.outside_radius ? ' · Außerhalb Einsatzradius' : '') +
     '</small></div>' + (extra ? '<details><summary>Zuweisen</summary>' + form + '</details>' : form) + '</div>';
 }
