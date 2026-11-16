@@ -565,14 +565,18 @@ function compactSuggestion(lead,partner,index,weeklyCount) {
   const km = value => value.toLocaleString("de-DE",{maximumFractionDigits:1});
   const route = partner.driveKm == null ? "Fahrtweg nicht verfügbar" :
     km(partner.driveKm) + ' km Fahrtweg · ' + Math.round(partner.driveMinutes) + ' Min.';
+  const seller = data.partners.find(p => p.id === partner.partner_id);
+  const team = data.teams.find(t => t.id === seller?.reonic_team_id && t.active);
+  const blocked = !seller?.active ? "Deaktiviert" :
+    lead.reonic_project_id && !seller.reonic_team_optional && !team?.leader_ids.length ? "Team fehlt" : "";
   const inside = !partner.outside_radius;
   const routeText = '<span class="quick-route' + (inside && partner.driveKm != null ? ' quick-route-inside' : '') +
     '">' + route + '</span>';
   return '<div class="quick-row' + (inside ? ' quick-row-inside' : '') + '"><strong class="quick-rank" aria-label="Platz ' + (index+1) + '">' + (index+1) +
     '</strong><div><strong>' + esc(partner.full_name) + '</strong><span class="quick-week-count">' + weeklyCount + ' ' +
     (weeklyCount === 1 ? 'Lead' : 'Leads') + ' diese Woche</span><small>' + routeText + ' · ' +
-    km(partner.distance_km) + ' km Luftlinie' + (partner.outside_radius ? ' · Außerhalb Einsatzradius' : '') +
-    '</small></div>' + (extra ? '<details><summary>Zuweisen</summary>' + form + '</details>' : form) + '</div>';
+    km(partner.distance_km) + ' km Luftlinie' + (partner.outside_radius ? (seller?.radius_km == null ? ' · Kein Einsatzradius hinterlegt' : ' · Außerhalb Einsatzradius') : '') +
+    '</small></div>' + (blocked ? '<small>' + blocked + '</small>' : extra ? '<details><summary>Zuweisen</summary>' + form + '</details>' : form) + '</div>';
 }
 async function suggest(id, quick = false) {
   const lead = data.leads.find(l => l.id === id);
@@ -591,7 +595,7 @@ async function suggest(id, quick = false) {
   try {
     const result = await client.rpc(quick ? "nearby_lead_partners" : "lead_candidates",{p_lead_id:id});
     fail(result.error);
-    const candidates = quick ? result.data.slice(0,40) : result.data;
+    const candidates = result.data;
     const {ranked,unavailable} = await byDrivingDistance(lead,candidates);
     if (!isCurrent()) return;
     const weeklyCounts = new Map();
