@@ -150,12 +150,52 @@ function weeklySummary() {
     '</h2><div class="table-wrap"><table><thead><tr><th>Lead-Anbieter</th><th>Bestellt pro Woche</th><th>Diese Woche zugewiesen</th></tr></thead><tbody>' +
     rows.join("") + '</tbody></table></div>');
 }
+function partnerWeek(week) {
+  const totals = new Map();
+  const get = id => {
+    if (!totals.has(id)) totals.set(id,{received:0,ordered:0,remaining:0,unlimited:0});
+    return totals.get(id);
+  };
+  const assignedByOrder = new Map();
+  for (const assignment of assignmentsInWeek(week)) {
+    get(assignment.partner_id).received++;
+    if (assignment.order_id) {
+      assignedByOrder.set(assignment.order_id,(assignedByOrder.get(assignment.order_id) || 0) + 1);
+    }
+  }
+  for (const order of data.orders) {
+    if (!order.partner_id || order.order_type !== "weekly" || !["open","in_progress"].includes(order.status)) continue;
+    const total = get(order.partner_id);
+    if (order.quantity == null) {
+      total.unlimited++;
+      continue;
+    }
+    total.ordered += order.quantity;
+    total.remaining += Math.max(0,order.quantity - (assignedByOrder.get(order.id) || 0));
+  }
+  return totals;
+}
+function weeklyQuantity(value,openQuantity) {
+  if (!openQuantity) return String(value);
+  return value ? value + " + Menge offen" : "Menge offen";
+}
+function adviserWeeklySummary() {
+  const week = weekStart(Date.now());
+  const rows = [...partnerWeek(week)].sort(([a],[b]) => nameFor(a).localeCompare(nameFor(b),"de"))
+    .map(([id,total]) => '<tr><td><strong>' + esc(nameFor(id)) + '</strong></td><td>' +
+      weeklyQuantity(total.ordered,total.unlimited) + '</td><td>' + total.received +
+      '</td><td><strong class="weekly-remaining">' + weeklyQuantity(total.remaining,total.unlimited) + '</strong></td></tr>');
+  return panel('<h2>Berater · Woche ab ' + esc(week.split("-").reverse().join(".")) +
+    '</h2><div class="table-wrap"><table class="adviser-week-table"><thead><tr><th>Berater</th><th>Bestellt</th><th>Erhalten</th><th>Noch offen</th></tr></thead><tbody>' +
+    (rows.join("") || '<tr><td colspan="4">Diese Woche sind noch keine Bestellungen oder Zuweisungen erfasst.</td></tr>') +
+    '</tbody></table></div>');
+}
 function dashboard() {
   const metrics = [["Leads", data.leads.length], ["Aktive Verkäufer", data.partners.filter(p => p.active && p.reonic_present).length],
     ["Zuweisungen", data.assignments.length], ["Bestellungen", data.orders.length]];
   return '<div class="stats">' + metrics.map(([name, count]) =>
     '<div class="stat"><div class="muted">' + name + '</div><strong>' + count + '</strong></div>').join("") +
-    '</div>' + weeklySummary() + panel('<h2>Verbindungen</h2><p>Supabase verbunden</p><p>' + syncStatus() + '</p>');
+    '</div>' + weeklySummary() + adviserWeeklySummary() + panel('<h2>Verbindungen</h2><p>Supabase verbunden</p><p>' + syncStatus() + '</p>');
 }
 
 let leadTab = "open";
@@ -552,7 +592,7 @@ function bindOrderChoices(target) {
     update();
   }
 }
-function compactSuggestion(lead,partner,index,weeklyCount) {
+function compactSuggestion(lead,partner,index,weekly = {received:0,ordered:0,remaining:0,unlimited:0}) {
   const source = sourceForLead(lead);
   const matching = orderOptions(partner.partner_id,source);
   const hidden = (name,value) => '<input type="hidden" name="' + name + '" value="' + esc(value) + '">';
@@ -573,8 +613,9 @@ function compactSuggestion(lead,partner,index,weeklyCount) {
     '">' + route + '</span>';
   return '<div class="quick-row' + (inside ? ' quick-row-inside' : '') + '"><strong class="quick-rank" aria-label="Platz ' + (index+1) + '">' + (index+1) +
     '</strong><div><strong>' + esc(partner.full_name) + '</strong>' +
-    (seller && !seller.active ? ' <span class="assignment-disabled">Deaktiviert</span>' : '') + '<span class="quick-week-count">' + weeklyCount + ' ' +
-    (weeklyCount === 1 ? 'Lead' : 'Leads') + ' diese Woche</span><small>' + routeText + ' · ' +
+    (seller && !seller.active ? ' <span class="assignment-disabled">Deaktiviert</span>' : '') + '<span class="quick-week-count">Diese Woche: <strong>' + weekly.received +
+    ' erhalten</strong> · ' + weeklyQuantity(weekly.ordered,weekly.unlimited) + ' bestellt · <strong class="weekly-remaining">' +
+    weeklyQuantity(weekly.remaining,weekly.unlimited) + ' offen</strong></span><small>' + routeText + ' · ' +
     km(partner.distance_km) + ' km Luftlinie' + (partner.outside_radius ? (seller?.radius_km == null ? ' · Kein Einsatzradius hinterlegt' : ' · Außerhalb Einsatzradius') : '') +
     '</small></div>' + (blocked ? '<small>' + blocked + '</small>' : extra ? '<details><summary>Zuweisen</summary>' + form + '</details>' : form) + '</div>';
 }
@@ -598,12 +639,7 @@ async function suggest(id, quick = false) {
     const candidates = result.data;
     const {ranked,unavailable} = await byDrivingDistance(lead,candidates);
     if (!isCurrent()) return;
-    const weeklyCounts = new Map();
-    if (quick) {
-      for (const assignment of assignmentsInWeek(weekStart(Date.now()))) {
-        weeklyCounts.set(assignment.partner_id,(weeklyCounts.get(assignment.partner_id) || 0) + 1);
-      }
-    }
+    const weeklyCounts = quick ? partnerWeek(weekStart(Date.now())) : null;
     const queue = quick ? focusQueue() : [];
     const index = queue.findIndex(row => row.id === id);
     const details = '<div class="lead-focus-details">' +
@@ -617,7 +653,7 @@ async function suggest(id, quick = false) {
         '</div>' : "");
     target.innerHTML = (quick ? '<div class="quick-layout"><div class="quick-lead">' + heading + '</div><div>' : heading) + (
       ranked.length ? '<div class="' + (quick ? 'quick-suggestions' : 'suggest-cards') + '">' + ranked.map((p,index) => {
-        if (quick) return compactSuggestion(lead,p,index,weeklyCounts.get(p.partner_id) || 0);
+        if (quick) return compactSuggestion(lead,p,index,weeklyCounts.get(p.partner_id));
         const seller = data.partners.find(s => s.id === p.partner_id);
         const team = data.teams.find(t => t.id === seller?.reonic_team_id && t.active);
         const needsTeam = Boolean(lead.reonic_project_id && (!seller?.reonic_user_id || (!seller.reonic_team_optional && !team?.leader_ids.length)));
