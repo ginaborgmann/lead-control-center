@@ -174,7 +174,11 @@ main .top h1{text-shadow:0 2px 18px #000,0 2px 4px #000}
 .quick-received{display:grid;justify-items:center;min-width:66px;padding:4px 6px;border-radius:8px;background:#3c2b16;color:#ffe0a0;text-align:center}
 .quick-received strong{font-size:27px;line-height:1;font-variant-numeric:tabular-nums}
 .quick-received span{font-size:10px;line-height:1.15;margin-top:3px}
-</style><style>#follow-up-due{width:auto;margin-inline-end:5px}.follow-up-overdue{color:#ffb276}.controls #follow-up-owner{width:auto;max-width:100%}</style></head><body>
+</style><style>#follow-up-due{width:auto;margin-inline-end:5px}.follow-up-overdue{color:#ffb276}.controls #follow-up-owner{width:auto;max-width:100%}</style><style>
+.follow-up-adviser{display:grid;grid-template-columns:minmax(0,1fr) minmax(120px,45%);gap:12px;align-items:start;padding:9px 0;border-bottom:1px solid #ffffff15}
+.adviser-note>summary{cursor:pointer;color:#ffd184}.adviser-note form{display:grid;gap:6px;margin-top:7px}.adviser-note textarea{resize:vertical}.adviser-note button{justify-self:start}
+@media(max-width:650px){.follow-up-adviser{grid-template-columns:1fr;gap:4px}}
+</style></head><body>
 <div id="gb-connect"><form id="login" class="gb-login">
   <div class="gb-brand">G.B</div><h2>Lead Control Center</h2>
   <label>E-Mail<input name="email" type="email" autocomplete="username" required></label>
@@ -196,5 +200,5 @@ main .top h1{text-shadow:0 2px 18px #000,0 2px 4px #000}
 </div>
 <dialog id="suggestions" class="suggest-modal"><div id="suggest-content"></div><form method="dialog"><button class="btn secondary">Schließen</button></form></dialog>
 <script src="app.js?v=lead-processing" defer></script>
-<script src="lead-follow-up.js?v=simple-alerts" defer></script>
+<script src="lead-follow-up.js?v=adviser-notes" defer></script>
 </body></html>
