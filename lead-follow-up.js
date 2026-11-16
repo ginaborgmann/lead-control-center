@@ -1,7 +1,7 @@
 "use strict";
 
 const followUp = {
-  rows: null, columns: [], busy: false, error: "", loaded: null,
+  rows: null, busy: false, error: "", loaded: null, nextPage: 1,
 };
 const followUpClock = new Intl.DateTimeFormat("de-DE", {
   timeZone:"Europe/Berlin", hour:"2-digit", minute:"2-digit", hourCycle:"h23"
@@ -45,11 +45,12 @@ function followUpView() {
     .filter(row => row.due)
     .sort((a,b) => (b.age ?? -1)-(a.age ?? -1) || a.name.localeCompare(b.name,"de"));
   const controls = '<div class="controls">' +
-    btn(followUp.busy ? "Reonic wird gelesen …" : "Nachverfolgung aktualisieren",
+    btn(followUp.busy ? "Reonic wird gelesen …" : followUp.nextPage > 1 && !followUp.loaded ? "Abruf fortsetzen" : "Nachverfolgung aktualisieren",
       'data-command="follow-up-refresh"' + (followUp.busy ? ' disabled' : '')) + '</div>';
-  const status = followUp.busy ? "Reonic-Anfragen werden geprüft …" +
+  const status = followUp.busy ? rows.length + " Reonic-Anfragen geprüft …" +
     (followUp.waiting ? " Der Abruf läuft gleich weiter." : "") :
-    followUp.loaded ? visible.length + " mit Handlungsbedarf · Stand " + date(followUp.loaded) : "";
+    followUp.loaded ? visible.length + " mit Handlungsbedarf · Stand " + date(followUp.loaded) :
+    followUp.error ? rows.length + " Reonic-Anfragen geprüft · " + visible.length + " mit Handlungsbedarf" : "";
   const incomplete = rows.some(row => row.unavailable || !row.complete);
   const table = visible.length ? '<div class="table-wrap"><table><thead><tr><th>Lead</th><th>Reonic-Spalte</th><th>Letzter Eintrag</th><th>Handlungsbedarf</th></tr></thead><tbody>' +
     visible.map(row => '<tr><td><strong>' + esc(row.name) + '</strong>' +
@@ -66,38 +67,58 @@ function followUpView() {
 
 async function loadFollowUp() {
   if (followUp.busy) return;
+  if (followUp.loaded || !followUp.rows) {
+    followUp.rows = [];
+    followUp.nextPage = 1;
+  }
   followUp.busy = true;
   followUp.error = "";
   followUp.loaded = null;
-  followUp.rows = [];
+  const deadline = Date.now() + 120000;
+  const rows = new Map(followUp.rows.map(row => [row.id,row]));
+  const pause = milliseconds => new Promise(resolve => setTimeout(resolve,milliseconds));
   if (view === "follow-up") render();
   try {
-    const rows = new Map();
-    for (let page=1; ; page++) {
-      const response = await client.functions.invoke("reonic-follow-up",{body:{page}});
+    let retries = 0;
+    while (!$("app").hidden && view === "follow-up") {
+      const remaining = deadline - Date.now();
+      if (remaining < 1000) throw Error("Das Zeitfenster ist erreicht. Klicke auf „Abruf fortsetzen“.");
+      const response = await client.functions.invoke("reonic-follow-up",{
+        body:{page:followUp.nextPage},signal:AbortSignal.timeout(Math.min(25000,remaining))
+      });
+      if ($("app").hidden || view !== "follow-up") return;
       if (response.error) {
         const details = await response.error.context?.json?.().catch(()=>null);
         throw Error(details?.error || response.error.message);
       }
-      if ($("app").hidden) return;
-      if (response.data.retryAfter) {
+      const batch = response.data;
+      if (batch?.retryAfter) {
+        const wait = (Number(batch.retryAfter) + 1)*1000;
+        if (retries++ || Date.now() + wait + 1000 >= deadline) {
+          throw Error("Reonic begrenzt den Abruf. Warte kurz und klicke dann auf „Abruf fortsetzen“.");
+        }
         followUp.waiting = true;
-        if (view === "follow-up") render();
-        await new Promise(resolve => setTimeout(resolve,Math.min(65,response.data.retryAfter + 1)*1000));
+        render();
+        await pause(wait);
         followUp.waiting = false;
-        page--;
         continue;
       }
-      for (const row of response.data.rows) rows.set(row.id,row);
+      if (!Array.isArray(batch?.rows) || typeof batch.next !== "boolean") throw Error("Reonic hat keine vollständige Antwort geliefert.");
+      retries = 0;
+      for (const row of batch.rows) rows.set(row.id,row);
       followUp.rows = [...rows.values()];
-      if (view === "follow-up") render();
-      if (!response.data.next) break;
-      await new Promise(resolve => setTimeout(resolve,5000));
+      if (!batch.next) {
+        followUp.loaded = new Date().toISOString();
+        return;
+      }
+      followUp.nextPage++;
+      render();
+      await pause(5000);
     }
-    followUp.loaded = new Date().toISOString();
   } catch (error) {
     followUp.error = "Abruf unvollständig. " + error.message;
   } finally {
+    followUp.waiting = false;
     followUp.busy = false;
     if (view === "follow-up" && !$("app").hidden) render();
   }
@@ -106,5 +127,5 @@ async function loadFollowUp() {
 document.addEventListener("click", event => {
   const button = event.target.closest("button");
   if (button?.dataset.command === "follow-up-refresh" ||
-      (button?.dataset.view === "follow-up" && !followUp.rows)) void loadFollowUp();
+      (button?.dataset.view === "follow-up" && !followUp.loaded && !followUp.error)) void loadFollowUp();
 });
