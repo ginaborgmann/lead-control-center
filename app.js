@@ -454,7 +454,7 @@ async function advanceQuick(delta = 0) {
   await suggest(next.id,true);
 }
 function manualPartnerForm(lead) {
-  const partners = data.partners.filter(p => p.active && p.reonic_present &&
+  const partners = data.partners.filter(p => p.reonic_present &&
     (!lead.reonic_project_id || (p.reonic_user_id && (p.reonic_team_optional || data.teams.some(t => t.id === p.reonic_team_id && t.active && t.leader_ids.length)))))
     .sort((a,b) => a.full_name.localeCompare(b.full_name,"de"));
   if (!partners.length) return '<div class="focus-other"><h3>Vertriebspartner manuell auswählen</h3><p>Schalte zuerst einen Vertriebspartner frei' +
@@ -463,7 +463,7 @@ function manualPartnerForm(lead) {
     '<input type="hidden" name="manual" value="true">' +
     input("Name oder PLZ suchen","partner_search","",'type="search" autocomplete="off" data-manual-search') +
     select("Vertriebspartner","partner_id",[["","Bitte wählen"],...partners.map(p =>
-      [p.id,p.full_name + " · " + (p.postal_code || p.reonic_postal_code || "PLZ fehlt")])],"") + assignmentChoice(lead,""),
+      [p.id,p.full_name + " · " + (p.postal_code || p.reonic_postal_code || "PLZ fehlt") + (p.active ? "" : " · Deaktiviert")])],"") + assignmentChoice(lead,""),
     "Manuell zuweisen",lead.id) + '</div>';
 }
 async function byDrivingDistance(lead, candidates) {
@@ -559,7 +559,7 @@ function compactSuggestion(lead,partner,index,weeklyCount) {
   const extra = matching.length > 2 || !source;
   const form = '<form class="quick-action" data-action="assign" data-id="' + esc(lead.id) + '"' +
     (extra ? '' : ' data-quick-direct') + '>' + hidden("partner_id",partner.partner_id) +
-    hidden("manual",String(Boolean(partner.outside_radius))) +
+    hidden("manual",String(Boolean(partner.outside_radius || !data.partners.find(p => p.id === partner.partner_id)?.active))) +
     (extra ? assignmentChoice(lead,partner.partner_id) : hidden("supplier_id",source) + hidden("order_id",matching[1]?.[0] || "")) +
     btn("Zuweisen") + '</form>';
   const km = value => value.toLocaleString("de-DE",{maximumFractionDigits:1});
@@ -567,13 +567,13 @@ function compactSuggestion(lead,partner,index,weeklyCount) {
     km(partner.driveKm) + ' km Fahrtweg · ' + Math.round(partner.driveMinutes) + ' Min.';
   const seller = data.partners.find(p => p.id === partner.partner_id);
   const team = data.teams.find(t => t.id === seller?.reonic_team_id && t.active);
-  const blocked = !seller?.active ? "Deaktiviert" :
-    lead.reonic_project_id && !seller.reonic_team_optional && !team?.leader_ids.length ? "Team fehlt" : "";
+  const blocked = lead.reonic_project_id && !seller.reonic_team_optional && !team?.leader_ids.length ? "Team fehlt" : "";
   const inside = !partner.outside_radius;
   const routeText = '<span class="quick-route' + (inside && partner.driveKm != null ? ' quick-route-inside' : '') +
     '">' + route + '</span>';
   return '<div class="quick-row' + (inside ? ' quick-row-inside' : '') + '"><strong class="quick-rank" aria-label="Platz ' + (index+1) + '">' + (index+1) +
-    '</strong><div><strong>' + esc(partner.full_name) + '</strong><span class="quick-week-count">' + weeklyCount + ' ' +
+    '</strong><div><strong>' + esc(partner.full_name) + '</strong>' +
+    (seller && !seller.active ? ' <span class="assignment-disabled">Deaktiviert</span>' : '') + '<span class="quick-week-count">' + weeklyCount + ' ' +
     (weeklyCount === 1 ? 'Lead' : 'Leads') + ' diese Woche</span><small>' + routeText + ' · ' +
     km(partner.distance_km) + ' km Luftlinie' + (partner.outside_radius ? (seller?.radius_km == null ? ' · Kein Einsatzradius hinterlegt' : ' · Außerhalb Einsatzradius') : '') +
     '</small></div>' + (blocked ? '<small>' + blocked + '</small>' : extra ? '<details><summary>Zuweisen</summary>' + form + '</details>' : form) + '</div>';
