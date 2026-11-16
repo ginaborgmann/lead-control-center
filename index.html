@@ -147,6 +147,12 @@ main:before{height:clamp(300px,32vw,465px)!important;background:
 main .top{background:transparent!important;backdrop-filter:none}
 main .top h1{text-shadow:0 2px 18px #000,0 2px 4px #000}
 @media(max-width:760px){.ember-sidebar .ember-brand{justify-content:flex-start;padding:4px 4px 12px!important}.ember-sidebar .gb-reference-logo{width:128px}main:before{height:270px!important;background-position:center,center,58% center!important}}
+</style><style>
+.order-group-line{display:inline-flex;align-items:center;gap:10px 18px;flex-wrap:wrap;vertical-align:middle;max-width:95%}
+.order-provider-list{display:inline-flex;gap:5px 8px;flex-wrap:wrap}
+.order-provider{display:inline-flex;align-items:center;gap:6px;padding:3px 8px;border:1px solid #715126;border-radius:7px;color:#e7d8bf;font-size:.84rem}
+.order-provider strong{color:#ffd684}
+.grouped-order>summary{cursor:pointer}
 </style></head><body>
 <div id="gb-connect"><form id="login" class="gb-login">
   <div class="gb-brand">G.B</div><h2>Lead Control Center</h2>
@@ -167,5 +173,5 @@ main .top h1{text-shadow:0 2px 18px #000,0 2px 4px #000}
   <p id="message" role="status"></p><div id="workspace"></div></main>
 </div>
 <dialog id="suggestions" class="suggest-modal"><div id="suggest-content"></div><form method="dialog"><button class="btn secondary">Schließen</button></form></dialog>
-<script src="app.js?v=direct-assignment-click" defer></script>
+<script src="app.js?v=grouped-orders" defer></script>
 </body></html>
