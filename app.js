@@ -613,11 +613,12 @@ function compactSuggestion(lead,partner,index,weekly = {received:0,ordered:0,rem
     '">' + route + '</span>';
   return '<div class="quick-row' + (inside ? ' quick-row-inside' : '') + '"><strong class="quick-rank" aria-label="Platz ' + (index+1) + '">' + (index+1) +
     '</strong><div><strong>' + esc(partner.full_name) + '</strong>' +
-    (seller && !seller.active ? ' <span class="assignment-disabled">Deaktiviert</span>' : '') + '<span class="quick-week-count">Diese Woche: <strong>' + weekly.received +
-    ' erhalten</strong> · ' + weeklyQuantity(weekly.ordered,weekly.unlimited) + ' bestellt · <strong class="weekly-remaining">' +
-    weeklyQuantity(weekly.remaining,weekly.unlimited) + ' offen</strong></span><small>' + routeText + ' · ' +
+    (seller && !seller.active ? ' <span class="assignment-disabled">Deaktiviert</span>' : '') + '<span class="quick-week-count">' +
+    (weekly.unlimited ? weekly.ordered + ' fest bestellt · ' + weekly.remaining + ' offen · Menge teils offen' :
+      weekly.ordered + ' bestellt · ' + weekly.remaining + ' offen') + '</span><small>' + routeText + ' · ' +
     km(partner.distance_km) + ' km Luftlinie' + (partner.outside_radius ? (seller?.radius_km == null ? ' · Kein Einsatzradius hinterlegt' : ' · Außerhalb Einsatzradius') : '') +
-    '</small></div>' + (blocked ? '<small>' + blocked + '</small>' : extra ? '<details><summary>Zuweisen</summary>' + form + '</details>' : form) + '</div>';
+    '</small></div><div class="quick-card-end"><span class="quick-received"><strong>' + weekly.received +
+    '</strong><span>Diese Woche<br>erhalten</span></span>' + (blocked ? '<small>' + blocked + '</small>' : extra ? '<details><summary>Zuweisen</summary>' + form + '</details>' : form) + '</div></div>';
 }
 async function suggest(id, quick = false) {
   const lead = data.leads.find(l => l.id === id);
