@@ -59,6 +59,10 @@ Deno.serve(async (req) => {
     const query = new URLSearchParams({stage:"request",kanbanColumnIds:[...columns.keys()].join(","),itemsPerPage:"4",page:String(page)});
     const projects = await api("residentialProjects?" + query);
     if (!Array.isArray(projects.data) || !projects.pagination) throw Error("Reonic lieferte keine vollständige Seite mit Anfragen.");
+    const {data:serviceUsers,error:serviceError} = await client.from("sales_partners")
+      .select("reonic_user_id").in("full_name",["Termin Service","Termin Service Zwei"]);
+    if (serviceError) throw Error("Die Terminservice-Konten konnten nicht geprüft werden.");
+    const serviceIds = new Set(serviceUsers.map(u => u.reonic_user_id).filter(Boolean));
     const rows = await Promise.all(projects.data.map(async (project: Project) => {
       const base = {
         id:project.id, name:project.customerContact?.fullName || project.name || "Anfrage",
@@ -83,9 +87,15 @@ Deno.serve(async (req) => {
         const hasActivities = Array.isArray(activities?.data);
         const missing = [!hasNotes && "Notizen", !hasActivities && "Aktivitäten"].filter(Boolean);
         if (!hasNotes && !hasActivities) return {...base,unavailable:true,missing,events:[]};
+        const isOwner = (entry: Entry) => Boolean(base.owner && entry.createdById === base.owner);
+        const isService = (entry: Entry) => Boolean(entry.createdById && serviceIds.has(entry.createdById));
+        const callNote = (entry: Entry) => {
+          const note = (typeof entry.text === "string" ? entry.text : entry.text?.plain || "").trim();
+          return /(?:^|[\s(])(?:n\.?\s*e\.?|a\.?\s*b\.?)(?=$|[\s.,:;!?)\-])|\bnicht\s+erreicht\b|\banruf(?:versuch)?\b|\bangerufen\b|\banrufbeantworter\b/i.test(note);
+        };
         const events = [
-          ...(hasNotes ? notes.data : []).map((entry: Entry) => ({at:entry.createdAt,kind:"Notiz",call:/^(?:ne|nicht erreicht)\b|\banruf(?:versuch)?\b|\bangerufen\b/i.test((typeof entry.text === "string" ? entry.text : entry.text?.plain || "").trim()), reached:false})),
-          ...(hasActivities ? activities.data : []).map((entry: Entry) => ({at:entry.createdAt,kind:entry.type === "call" ? "Anruf" : "Termin", call:entry.type === "call",reached:entry.type === "call" && ["connectedSuccessfulDiscussion","connectedNeedsFollowup"].includes(entry.outcome || "")})),
+          ...(hasNotes ? notes.data : []).filter((entry: Entry) => isOwner(entry) || (isService(entry) && callNote(entry))).map((entry: Entry) => ({at:entry.createdAt,kind:"Notiz",call:callNote(entry), reached:false})),
+          ...(hasActivities ? activities.data : []).filter((entry: Entry) => isOwner(entry) || (isService(entry) && entry.type === "call")).map((entry: Entry) => ({at:entry.createdAt,kind:entry.type === "call" ? "Anruf" : "Termin", call:entry.type === "call",reached:entry.type === "call" && ["connectedSuccessfulDiscussion","connectedNeedsFollowup"].includes(entry.outcome || "")})),
         ].filter(entry => Number.isFinite(Date.parse(entry.at))).sort((a,b) => Date.parse(b.at)-Date.parse(a.at));
         const stored = assigned?.data?.lead_assignments;
         const assignment = Array.isArray(stored) ? stored[0] : stored;
@@ -108,7 +118,7 @@ Deno.serve(async (req) => {
 
 type Project = {id:string; name?:string; customerContact?:{fullName?:string}; kanbanColumnId:string;
   keyAccountManagerId?:string; requestCreatedAt?:string; projectCreatedAt?:string};
-type Entry = {createdAt:string; text?:string | {plain?:string}; type?:string; outcome?:string};
+type Entry = {createdAt:string; createdById?:string; text?:string | {plain?:string}; type?:string; outcome?:string};
 
 class ReonicLimit extends Error {
   constructor(public seconds: number) { super("Reonic-Abruflimit erreicht."); }
