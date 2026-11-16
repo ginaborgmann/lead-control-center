@@ -84,7 +84,7 @@ Deno.serve(async (req) => {
         const missing = [!hasNotes && "Notizen", !hasActivities && "Aktivitäten"].filter(Boolean);
         if (!hasNotes && !hasActivities) return {...base,unavailable:true,missing,events:[]};
         const events = [
-          ...(hasNotes ? notes.data : []).map((entry: Entry) => ({at:entry.createdAt,kind:"Notiz",call:/^(?:ne|nicht erreicht)\b|\banruf(?:versuch)?\b|\bangerufen\b/i.test(String(entry.text ?? "").trim()), reached:false})),
+          ...(hasNotes ? notes.data : []).map((entry: Entry) => ({at:entry.createdAt,kind:"Notiz",call:/^(?:ne|nicht erreicht)\b|\banruf(?:versuch)?\b|\bangerufen\b/i.test((typeof entry.text === "string" ? entry.text : entry.text?.plain || "").trim()), reached:false})),
           ...(hasActivities ? activities.data : []).map((entry: Entry) => ({at:entry.createdAt,kind:entry.type === "call" ? "Anruf" : "Termin", call:entry.type === "call",reached:entry.type === "call" && ["connectedSuccessfulDiscussion","connectedNeedsFollowup"].includes(entry.outcome || "")})),
         ].filter(entry => Number.isFinite(Date.parse(entry.at))).sort((a,b) => Date.parse(b.at)-Date.parse(a.at));
         const stored = assigned?.data?.lead_assignments;
@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
           complete:hasNotes && hasActivities && !notes.pagination?.next && !activities.pagination?.next,missing,events};
       } catch (error) {
         if (error instanceof ReonicLimit) throw error;
-        return {...base,unavailable:true,missing:[error instanceof Error ? error.message : "Verlaufsdaten"],events:[]};
+        return {...base,unavailable:true,missing:["Verlaufsdaten"],events:[]};
       }
     }));
     return reply({rows,next:Boolean(projects.pagination.next),columns:[...new Set(columns.values())]});
@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
 
 type Project = {id:string; name?:string; customerContact?:{fullName?:string}; kanbanColumnId:string;
   keyAccountManagerId?:string; requestCreatedAt?:string; projectCreatedAt?:string};
-type Entry = {createdAt:string; text?:string; type?:string; outcome?:string};
+type Entry = {createdAt:string; text?:string | {plain?:string}; type?:string; outcome?:string};
 
 class ReonicLimit extends Error {
   constructor(public seconds: number) { super("Reonic-Abruflimit erreicht."); }
