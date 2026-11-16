@@ -2,7 +2,6 @@
 
 const followUp = {
   rows: null, columns: [], busy: false, error: "", loaded: null,
-  owner: "", onlyDue: false, nextPage: 1,
 };
 const followUpClock = new Intl.DateTimeFormat("de-DE", {
   timeZone:"Europe/Berlin", hour:"2-digit", minute:"2-digit", hourCycle:"h23"
@@ -39,53 +38,30 @@ function followUpStatus(lead,now) {
   return {short:reasons.join(" · ") || (latest ? "Im Verlauf dokumentiert" : "Noch kein Eintrag"),due:reasons.length>0,age};
 }
 
-function followUpOwner(id) {
-  return id ? data.partners.find(p => p.reonic_user_id === id)?.full_name || "Unbekannter Key-Account" : "Ohne Key-Account";
-}
-
 function followUpView() {
   const rows = followUp.rows || [];
   const now = Date.now();
-  const report = rows.map(row => ({...row,...followUpStatus(row,now)}));
-  const groups = new Map();
-  for (const row of report) {
-    const key = row.owner || "unassigned";
-    if (!groups.has(key)) groups.set(key,[]);
-    groups.get(key).push(row);
-  }
-  const owners = [...groups.keys()].sort((a,b) => followUpOwner(a).localeCompare(followUpOwner(b),"de"));
+  const visible = rows.map(row => ({...row,...followUpStatus(row,now)}))
+    .filter(row => row.due)
+    .sort((a,b) => (b.age ?? -1)-(a.age ?? -1) || a.name.localeCompare(b.name,"de"));
   const controls = '<div class="controls">' +
     btn(followUp.busy ? "Reonic wird gelesen …" : "Nachverfolgung aktualisieren",
-      'data-command="follow-up-refresh"' + (followUp.busy ? ' disabled' : '')) +
-    '<select id="follow-up-owner" aria-label="Key-Account">' +
-    options([["","Alle Key-Accounts"],...owners.map(id => [id,followUpOwner(id === "unassigned" ? null : id)])],followUp.owner) +
-    '</select><label><input type="checkbox" id="follow-up-due"' + (followUp.onlyDue ? ' checked' : '') +
-    '> Nur Handlungsbedarf</label></div>';
-  const summary = '<p role="status">' + (followUp.busy ? rows.length + " Anfragen geprüft …" + (followUp.waiting ? " Reonic-Limit, der Abruf läuft gleich weiter." : "") :
-    followUp.loaded ? rows.length + " Anfragen · " + report.filter(row=>row.due).length + " mit Handlungsbedarf · Stand " + date(followUp.loaded) :
-    "Die ausgewählten Reonic-Anfragen werden beim Öffnen geprüft.") + '</p>';
-  const sections = owners.filter(id => !followUp.owner || followUp.owner === id).map(id => {
-    const group = groups.get(id);
-    const visible = group.filter(row => !followUp.onlyDue || row.due)
-      .sort((a,b) => Number(b.due)-Number(a.due) || (b.age ?? -1)-(a.age ?? -1) || a.name.localeCompare(b.name,"de"));
-    if (!visible.length) return "";
-    const title = esc(followUpOwner(id === "unassigned" ? null : id)) + " · " +
-      group.filter(row=>row.due).length + " mit Handlungsbedarf / " + group.length + " Anfragen";
-    return panel('<h3>' + title + '</h3><div class="table-wrap"><table><thead><tr><th>Lead</th><th>Reonic-Spalte</th><th>Letzter Eintrag</th><th>Stand</th></tr></thead><tbody>' +
-      visible.map(row => '<tr><td><strong>' + esc(row.name) + '</strong>' +
-        (row.events.length ? record("Verlauf",'<ul>' + row.events.slice(0,10).map(e=>'<li>' + esc(date(e.at)) + ' · ' + esc(e.kind) + (e.kind === "Notiz" && e.call ? ' (Anrufhinweis)' : '') + '</li>').join("") + '</ul>') : '') +
-        '</td><td>' + esc(row.column) + '</td><td>' + (row.events[0] ? esc(date(row.events[0].at) + " · " + row.events[0].kind) : "—") +
-        '</td><td><strong' + (row.due ? ' class="follow-up-overdue"' : '') + '>' + esc(row.short) + '</strong>' +
-        (row.age != null ? '<br><small>' + row.age + ' Werktage</small>' : '') +
-        (!row.assignedAt && !row.unavailable ? '<br><small>Zuweisungsdatum nicht verfügbar</small>' : '') +
-        '</td></tr>').join("") + '</tbody></table></div>');
-  });
-  const unavailable = report.filter(row=>row.unavailable || !row.complete).length;
-  return panel('<h2>Lead-Abarbeitung</h2>' + controls + summary +
-    '<p class="muted">Nachfassen nach mehr als 3 Werktagen ohne Notiz oder Aktivität. Samstag und Sonntag zählen nicht.</p>' +
+      'data-command="follow-up-refresh"' + (followUp.busy ? ' disabled' : '')) + '</div>';
+  const status = followUp.busy ? "Reonic-Anfragen werden geprüft …" +
+    (followUp.waiting ? " Der Abruf läuft gleich weiter." : "") :
+    followUp.loaded ? visible.length + " mit Handlungsbedarf · Stand " + date(followUp.loaded) : "";
+  const incomplete = rows.some(row => row.unavailable || !row.complete);
+  const table = visible.length ? '<div class="table-wrap"><table><thead><tr><th>Lead</th><th>Reonic-Spalte</th><th>Letzter Eintrag</th><th>Handlungsbedarf</th></tr></thead><tbody>' +
+    visible.map(row => '<tr><td><strong>' + esc(row.name) + '</strong>' +
+      (row.events.length ? record("Verlauf",'<ul>' + row.events.slice(0,10).map(e => '<li>' + esc(date(e.at)) + ' · ' + esc(e.kind) + (e.kind === "Notiz" && e.call ? ' (Anrufhinweis)' : '') + '</li>').join("") + '</ul>') : '') +
+      '</td><td>' + esc(row.column) + '</td><td>' + (row.events[0] ? esc(date(row.events[0].at) + " · " + row.events[0].kind) : "—") +
+      '</td><td><strong class="follow-up-overdue">' + esc(row.short) + '</strong>' +
+      (row.age != null ? '<br><small>' + row.age + ' Werktage</small>' : '') +
+      '</td></tr>').join("") + '</tbody></table></div>' :
+    followUp.loaded && !incomplete ? '<p>Aktuell kein Handlungsbedarf.</p>' : "";
+  return panel('<h2>Lead-Abarbeitung</h2>' + controls + '<p role="status">' + esc(status) + '</p>' +
     (followUp.error ? '<p role="alert">' + esc(followUp.error) + '</p>' : '') +
-    (unavailable ? '<p>' + unavailable + ' Verläufe fehlen oder sind unvollständig.</p>' : '')) +
-    (sections.join("") || (!followUp.busy && followUp.rows ? panel('<p>Keine Anfragen für diese Auswahl.</p>') : ""));
+    (incomplete ? '<p>Einige Reonic-Verläufe konnten nicht vollständig geprüft werden.</p>' : '') + table);
 }
 
 async function loadFollowUp() {
@@ -131,10 +107,4 @@ document.addEventListener("click", event => {
   const button = event.target.closest("button");
   if (button?.dataset.command === "follow-up-refresh" ||
       (button?.dataset.view === "follow-up" && !followUp.rows)) void loadFollowUp();
-});
-document.addEventListener("change",event => {
-  if (event.target.id === "follow-up-owner") followUp.owner = event.target.value;
-  else if (event.target.id === "follow-up-due") followUp.onlyDue = event.target.checked;
-  else return;
-  render();
 });
