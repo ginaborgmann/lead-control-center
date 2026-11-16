@@ -169,6 +169,11 @@ main .top h1{text-shadow:0 2px 18px #000,0 2px 4px #000}
 .adviser-week-table th:not(:first-child),.adviser-week-table td:not(:first-child){text-align:right}
 .weekly-remaining{color:#ffd184}
 .quick-row .quick-week-count{line-height:1.45}
+</style><style>
+.quick-card-end{display:grid;justify-items:center;gap:5px}
+.quick-received{display:grid;justify-items:center;min-width:66px;padding:4px 6px;border-radius:8px;background:#3c2b16;color:#ffe0a0;text-align:center}
+.quick-received strong{font-size:27px;line-height:1;font-variant-numeric:tabular-nums}
+.quick-received span{font-size:10px;line-height:1.15;margin-top:3px}
 </style></head><body>
 <div id="gb-connect"><form id="login" class="gb-login">
   <div class="gb-brand">G.B</div><h2>Lead Control Center</h2>
@@ -189,5 +194,5 @@ main .top h1{text-shadow:0 2px 18px #000,0 2px 4px #000}
   <p id="message" role="status"></p><div id="workspace"></div></main>
 </div>
 <dialog id="suggestions" class="suggest-modal"><div id="suggest-content"></div><form method="dialog"><button class="btn secondary">Schließen</button></form></dialog>
-<script src="app.js?v=adviser-weekly-dashboard" defer></script>
+<script src="app.js?v=highlight-weekly-received" defer></script>
 </body></html>
