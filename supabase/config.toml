@@ -3,3 +3,6 @@ verify_jwt = false # Auth user and dashboard admin membership are verified in th
 
 [functions.reonic-requests]
 verify_jwt = false # The handler checks Supabase Auth and admin membership.
+
+[functions.reonic-follow-up]
+verify_jwt = false # The handler verifies the user and the admin membership.
