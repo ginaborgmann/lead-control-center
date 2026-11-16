@@ -192,10 +192,13 @@ function matchesPartnerPostalView(partner) {
   return filter.partnerPostalView === "with" ? hasPostalCode : !hasPostalCode;
 }
 function partners() {
-  return panel('<h2>Verkäufer verwalten</h2><div class="controls">' + search("Name, PLZ, Kontakt oder Reonic-ID") +
-    '<label>PLZ-Liste <select id="partner-postal-view">' +
-    options([["with","Mit PLZ"],["without","Ohne PLZ"],["all","Alle Profile verwalten"]],filter.partnerPostalView) +
-    '</select></label>' + btn("Reonic synchronisieren", 'data-command="sync"') + '</div><p>' + syncStatus() + '</p><div id="records"></div>');
+  return panel('<h2>Verkäufer verwalten</h2><div class="controls">' + search("Name, PLZ, Team oder Kontakt suchen") +
+    btn(filter.partnerPostalView === "without" ? "Zur PLZ-Liste" : "Reonic-Benutzer hinzufügen", 'data-command="partner-intake"') +
+    '<label>Ansicht <select id="partner-postal-view">' +
+    options([["with","Mit PLZ"],["without","Reonic-Benutzer ohne PLZ"],["all","Alle Profile verwalten"]],filter.partnerPostalView) +
+    '</select></label>' + btn("Reonic synchronisieren", 'data-command="sync"') + '</div><p>' + syncStatus() + '</p>' +
+    (filter.partnerPostalView === "without" ? '<h3>Reonic-Benutzer hinzufügen</h3><p>Benutzer öffnen, PLZ und bei Bedarf das Team eintragen und speichern. Danach erscheint das Profil in der PLZ-Liste.</p>' : '') +
+    '<div id="records"></div>');
 }
 
 function orders() {
@@ -275,7 +278,7 @@ function renderRecords() {
       matchesLeadStatus(l) && matches(l.customer_name, l.postal_code, l.source, l.email, l.phone)).map(leadRecord),
     partners: () => [...data.partners].sort((a,b) => a.full_name.localeCompare(b.full_name, "de")).filter(p =>
       matchesPartnerPostalView(p) &&
-      matches(p.full_name, p.postal_code, p.reonic_postal_code, p.email, p.phone, p.reonic_user_id)).map(partnerRecord),
+      matches(p.full_name, p.postal_code, p.reonic_postal_code, p.email, p.phone, p.reonic_user_id, data.teams.find(t => t.id === p.reonic_team_id)?.name)).map(partnerRecord),
     orders: () => {
       const visible = data.orders.filter(o =>
         (!filter.orderSupplier || (o.supplier_id || "unassigned") === filter.orderSupplier) &&
@@ -325,7 +328,10 @@ function leadRecord(l) {
 }
 function partnerRecord(p) {
   const zip = p.postal_code || p.reonic_postal_code;
-  const title = esc(p.full_name) + ' · ' + (zip ? esc(zip) : '<span class="zip-warning">PLZ fehlt</span>') +
+  const team = data.teams.find(t => t.id === p.reonic_team_id);
+  const teamLabel = team ? team.name + (team.active ? "" : " (archiviert)") :
+    p.reonic_team_optional ? "Ohne Team" : "Kein Team hinterlegt";
+  const title = esc(p.full_name) + ' · <strong>Team: ' + esc(teamLabel) + '</strong> · ' + (zip ? esc(zip) : '<span class="zip-warning">PLZ fehlt</span>') +
     ' · ' + (!p.reonic_present ? 'Nicht mehr in Reonic verfügbar' : p.active ? 'Freigeschaltet' : 'Deaktiviert');
   return record(title, '<p>' + esc([p.email,p.phone,p.reonic_user_id && "Reonic-ID " + p.reonic_user_id].filter(Boolean).join(" · ")) + '</p>' +
     fields("partner", input("Manuelle PLZ", "postal_code", p.postal_code, zipAttr) +
@@ -661,12 +667,18 @@ $("workspace").addEventListener("change",event => {
   const field = fields[event.target.id];
   if (!field) return;
   filter[field] = event.target.value;
-  renderRecords();
+  if (field === "partnerPostalView") render();
+  else renderRecords();
 });
 document.addEventListener("click",async event => {
   const button = event.target.closest("button");
   if (!button) return;
   if (button.dataset.view) { view = button.dataset.view; message(""); render(); }
+  if (button.dataset.command === "partner-intake") {
+    filter.partnerPostalView = filter.partnerPostalView === "without" ? "with" : "without";
+    filter.partners = "";
+    render();
+  }
   if (button.dataset.command === "requests") await importRequests(true);
   if (button.dataset.command === "retry-reonic") {
     button.disabled = true;
