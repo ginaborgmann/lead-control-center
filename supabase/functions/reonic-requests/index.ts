@@ -145,6 +145,7 @@ Deno.serve(async (req) => {
     if (!Array.isArray(project.assignedUserIds) || !Array.isArray(project.assignedTeamIds)) {
       throw Error("Reonic hat die aktuellen Zuweisungen der Anfrage nicht vollständig geliefert.");
     }
+    const move = await newRequestPlacement(project,api);
     if (!assignment) {
       if (!body.partner_id) return reply({error:"Bitte einen Berater auswählen."},400);
       if (project.archivedAt || project.stage !== "request" || project.keyAccountManagerId || project.assignedUserIds.length) {
@@ -176,14 +177,17 @@ Deno.serve(async (req) => {
     }
     const teamIds = assignment.reonic_team_id ? [...new Set([...project.assignedTeamIds,assignment.reonic_team_id])] : project.assignedTeamIds;
     const confirmed = () => project.keyAccountManagerId === partner.reonic_user_id &&
-      (!assignment.reonic_team_id || project.assignedTeamIds?.includes(assignment.reonic_team_id));
+      (!assignment.reonic_team_id || project.assignedTeamIds?.includes(assignment.reonic_team_id)) &&
+      (!move || project.kanbanPlacements?.some((p: KanbanPlacement) =>
+        p.boardId === move.boardId && p.columnId === move.columnId));
     if (!confirmed()) {
       project = await api(path + "/update",{
         keyAccountManagerId:partner.reonic_user_id,
         ...(assignment.reonic_team_id ? {assignedTeamIds:teamIds} : {}),
+        ...(move ? {kanbanPlacements:[move]} : {}),
       });
       if (!confirmed()) project = await api(path);
-      if (!confirmed()) throw Error("Reonic hat Key-Account und Team noch nicht bestätigt. Bitte erneut übertragen.");
+      if (!confirmed()) throw Error("Reonic hat die Zuweisung oder den Spaltenwechsel noch nicht bestätigt. Bitte erneut übertragen.");
     }
     db(await server.from("lead_assignments").update({reonic_synced_at:new Date().toISOString()}).eq("lead_id",lead.id));
     return reply({success:true});
@@ -202,4 +206,31 @@ function db<T>(result: {data:T; error:{code?:string} | null}): NonNullable<T> {
 
 async function readAssignment(server: SupabaseClient, id:string) {
   return db(await server.from("lead_assignments").select("partner_id,reonic_team_id,reonic_synced_at").eq("lead_id",id).maybeSingle());
+}
+
+type KanbanPlacement = {boardId:string; columnId:string};
+type RequestBoard = {id:string; archivedAt?:string; columns: {id:string; name:string; archivedAt?:string}[]};
+
+async function newRequestPlacement(
+  project: {stage:string; archivedAt?:string; kanbanColumnId?:string; kanbanBoardId?:string; kanbanPlacements?:KanbanPlacement[]},
+  api: (path:string) => Promise<{data:RequestBoard[]; pagination?:{next?:string}}>,
+): Promise<KanbanPlacement | null> {
+  if (project.stage !== "request" || project.archivedAt || project.kanbanColumnId ||
+      project.kanbanPlacements?.some(p => p.columnId)) return null;
+
+  const boards = await api("kanbanBoards?projectDomain=residential&projectStage=request");
+  if (!Array.isArray(boards.data) || boards.pagination?.next) {
+    throw Error("Reonic hat die Anfragen-Boards nicht vollständig geliefert.");
+  }
+  const boardId = project.kanbanBoardId || project.kanbanPlacements?.[0]?.boardId;
+  const targets = boards.data
+    .filter(board => !board.archivedAt && (!boardId || board.id === boardId))
+    .flatMap(board => (board.columns || [])
+      .filter(column => !column.archivedAt &&
+        column.name.toLocaleLowerCase("de-DE").replace(/[^a-z0-9]/g,"") === "neueanfragen")
+      .map(column => ({boardId:board.id,columnId:column.id})));
+  if (targets.length !== 1) {
+    throw Error("Die Spalte „Neue Anfragen“ konnte in Reonic nicht eindeutig ermittelt werden.");
+  }
+  return targets[0];
 }
