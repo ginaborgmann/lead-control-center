@@ -13,7 +13,7 @@ const options = (rows, selected) => rows.map(([value, label]) =>
   '<option value="' + esc(value) + '"' + (value === selected ? ' selected' : '') + '>' + esc(label) + '</option>').join("");
 const select = (label, name, rows, selected) =>
   '<label>' + label + '<select name="' + name + '">' + options(rows, selected) + '</select></label>';
-const titles = { dashboard: "Dashboard", leads: "Leads & Zuweisung", partners: "Verkäufer", orders: "Bestellungen", settings: "Einstellungen" };
+const titles = { dashboard: "Dashboard", leads: "Leads & Zuweisung", partners: "Verkäufer", orders: "Bestellungen", "follow-up": "Lead-Abarbeitung", settings: "Einstellungen" };
 const statuses = { new: "Neu", assigned: "Zugewiesen", in_progress: "In Bearbeitung", completed: "Abgeschlossen" };
 const orderStatuses = { draft: "Entwurf", open: "Offen", in_progress: "In Bearbeitung", completed: "Abgeschlossen", cancelled: "Storniert" };
 const zipAttr = 'inputmode="numeric" pattern="[0-9]{5}" maxlength="5"';
@@ -104,7 +104,7 @@ function render() {
     else button.removeAttribute("aria-current");
   });
   if (!data) return;
-  const views = { dashboard, leads, partners, orders, settings };
+  const views = { dashboard, leads, partners, orders, settings, "follow-up": followUpView };
   $("workspace").innerHTML = views[view]();
   renderRecords();
   if ($("lead-focus")) void advanceQuick();
