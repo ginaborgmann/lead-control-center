@@ -287,7 +287,13 @@ function renderRecords() {
         return byName * (filter.orderSort === "za" ? -1 : 1) || newest;
       });
       $("order-result-count").textContent = visible.length + " von " + data.orders.length + " Bestellungen";
-      return visible.map(orderRecord);
+      const groups = new Map();
+      for (const order of visible) {
+        const key = order.partner_id || order.id;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(order);
+      }
+      return [...groups.values()].map(orderGroup);
     }
   };
   $("records").innerHTML = lists[view]().join("") || '<p class="muted">Keine passenden Einträge.</p>';
@@ -335,6 +341,20 @@ function sellerOrders(p) {
       partner_id:p.id, order_type:"once", status:"open",
       postal_code:p.postal_code || p.reonic_postal_code, radius_km:p.radius_km
     }));
+}
+function orderGroup(orders) {
+  const name = orders[0].partner_id ? nameFor(orders[0].partner_id) : "Freie Gebietsbestellung";
+  const entries = orders.slice().sort((a,b) =>
+    supplierFor(a.supplier_id).localeCompare(supplierFor(b.supplier_id),"de"));
+  const labels = entries.map(order => {
+    const supplier = order.supplier_id ? supplierFor(order.supplier_id) : "Ohne Anbieter";
+    const amount = order.quantity == null ? "Menge offen" : order.quantity +
+      (order.order_type === "weekly" ? " pro Woche" : " einmalig");
+    return '<span class="order-provider">' + esc(supplier) + ' <strong>' + esc(amount) + '</strong></span>';
+  }).join("");
+  return '<details class="record grouped-order"><summary><span class="order-group-line"><strong>' +
+    esc(name) + '</strong><span class="order-provider-list">' + labels +
+    '</span></span></summary>' + entries.map(orderRecord).join("") + '</details>';
 }
 function orderRecord(o) {
   const assigned = data.assignments.filter(a => a.order_id === o.id);
