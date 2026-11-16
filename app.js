@@ -216,6 +216,7 @@ function orderForm(o) {
   const orderState = Object.entries(orderStatuses);
   if (o.status && !orderStatuses[o.status]) orderState.push([o.status, o.status]);
   return fields("order", select("Verkäufer", "partner_id", sellers, o.partner_id) +
+    input("Name der freien Gebietsbestellung", "area_name", o.area_name, 'maxlength="100" placeholder="z. B. Region Köln"') +
     select("Lead-Anbieter", "supplier_id", suppliers, o.supplier_id) +
     select("Bestellart", "order_type", [["once", "Einmalig"], ["weekly", "Wöchentlich"]], o.order_type) +
     (o.postal_codes_only ? '<p>Hinterlegte PLZ beim Anbieter · Menge offen</p>' : input("Menge", "quantity", o.quantity, 'type="number" min="1" required')) +
@@ -278,7 +279,7 @@ function renderRecords() {
     orders: () => {
       const visible = data.orders.filter(o =>
         (!filter.orderSupplier || (o.supplier_id || "unassigned") === filter.orderSupplier) &&
-        matches(o.id, nameFor(o.partner_id), supplierFor(o.supplier_id), o.postal_code, orderStatuses[o.status] || o.status));
+        matches(o.id, o.area_name, nameFor(o.partner_id), supplierFor(o.supplier_id), o.postal_code, orderStatuses[o.status] || o.status));
       visible.sort((a,b) => {
         const newest = b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id);
         if (filter.orderSort === "newest") return newest;
@@ -343,7 +344,7 @@ function sellerOrders(p) {
     }));
 }
 function orderGroup(orders) {
-  const name = orders[0].partner_id ? nameFor(orders[0].partner_id) : "Freie Gebietsbestellung";
+  const name = orders[0].partner_id ? nameFor(orders[0].partner_id) : orders[0].area_name || "Freie Gebietsbestellung";
   const entries = orders.slice().sort((a,b) =>
     supplierFor(a.supplier_id).localeCompare(supplierFor(b.supplier_id),"de"));
   const labels = entries.map(order => {
@@ -365,7 +366,7 @@ function orderRecord(o) {
   const supplier = o.supplier_id ? supplierFor(o.supplier_id) : "Ohne Anbieter";
   const volume = o.quantity == null ? "Menge offen" : o.quantity +
     (o.quantity === 1 ? " Lead" : " Leads") + (o.order_type === "weekly" ? " pro Woche" : " einmalig");
-  return record(esc(o.partner_id ? nameFor(o.partner_id) : "Freie Gebietsbestellung") + " · " +
+  return record(esc(o.partner_id ? nameFor(o.partner_id) : o.area_name || "Freie Gebietsbestellung") + " · " +
     esc(supplier) + ' · <strong>' + esc(volume) + '</strong> · ' +
     esc(orderStatuses[o.status] || o.status) + " · " + date(o.created_at),
     "<p>" + esc(supplierFor(o.supplier_id)) + " · " + progress + "</p>" + orderForm(o) +
@@ -403,7 +404,7 @@ async function save(action, values, id) {
       if (!postalCodesOnly && Boolean(values.radius_km) === Boolean(values.max_drive_minutes)) {
         throw Error("Bitte entweder den Luftlinien-Umkreis oder die maximale Fahrzeit eintragen.");
       }
-      const row = {...values, max_drive_minutes:values.max_drive_minutes ? Number(values.max_drive_minutes) : null, partner_id:optional(values.partner_id), supplier_id:optional(values.supplier_id),
+      const row = {...values, area_name:optional(values.area_name), max_drive_minutes:values.max_drive_minutes ? Number(values.max_drive_minutes) : null, partner_id:optional(values.partner_id), supplier_id:optional(values.supplier_id),
         postal_code:optional(values.postal_code), radius_km:values.radius_km ? Number(values.radius_km) : null,
         quantity:postalCodesOnly ? null : Number(values.quantity), notes:optional(values.notes)};
       result = id ? await client.from("lead_orders").update(row).eq("id",id).select("id").single() : await client.from("lead_orders").insert(row);
