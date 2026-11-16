@@ -23,11 +23,11 @@ function followUpWorkdays(from,to) {
 }
 
 function followUpStatus(lead,now) {
-  if (lead.unavailable) return {short:"Verlauf nicht abrufbar",due:false};
+  if (lead.unavailable) return {short:"Verlauf nicht abrufbar" + (lead.missing?.length ? " (" + lead.missing.join(", ") + ")" : ""),due:false};
   const latest = lead.events[0];
   const age = followUpWorkdays(latest?.at || lead.assignedAt || lead.createdAt,now);
   const reasons = [];
-  if (age > 3) reasons.push(latest ? "Nachfassen fällig" : "Keine Bearbeitung dokumentiert");
+  if (age > 3 && !lead.missing?.length) reasons.push(latest ? "Nachfassen fällig" : "Keine Bearbeitung dokumentiert");
   if (lead.assignedAt && lead.complete && followUpWorkdays(lead.assignedAt,now) > 2) {
     const calls = lead.events.filter(e => e.call && Date.parse(e.at) >= Date.parse(lead.assignedAt) &&
       followUpWorkdays(lead.assignedAt,e.at) <= 2).reverse();
@@ -61,7 +61,7 @@ function followUpView() {
     options([["","Alle Key-Accounts"],...owners.map(id => [id,followUpOwner(id === "unassigned" ? null : id)])],followUp.owner) +
     '</select><label><input type="checkbox" id="follow-up-due"' + (followUp.onlyDue ? ' checked' : '') +
     '> Nur Handlungsbedarf</label></div>';
-  const summary = '<p role="status">' + (followUp.busy ? rows.length + " Anfragen geprüft …" :
+  const summary = '<p role="status">' + (followUp.busy ? rows.length + " Anfragen geprüft …" + (followUp.waiting ? " Reonic-Limit, der Abruf läuft gleich weiter." : "") :
     followUp.loaded ? rows.length + " Anfragen · " + report.filter(row=>row.due).length + " mit Handlungsbedarf · Stand " + date(followUp.loaded) :
     "Die ausgewählten Reonic-Anfragen werden beim Öffnen geprüft.") + '</p>';
   const sections = owners.filter(id => !followUp.owner || followUp.owner === id).map(id => {
@@ -104,10 +104,19 @@ async function loadFollowUp() {
         throw Error(details?.error || response.error.message);
       }
       if ($("app").hidden) return;
+      if (response.data.retryAfter) {
+        followUp.waiting = true;
+        if (view === "follow-up") render();
+        await new Promise(resolve => setTimeout(resolve,Math.min(65,response.data.retryAfter + 1)*1000));
+        followUp.waiting = false;
+        page--;
+        continue;
+      }
       for (const row of response.data.rows) rows.set(row.id,row);
       followUp.rows = [...rows.values()];
       if (view === "follow-up") render();
       if (!response.data.next) break;
+      await new Promise(resolve => setTimeout(resolve,5000));
     }
     followUp.loaded = new Date().toISOString();
   } catch (error) {
