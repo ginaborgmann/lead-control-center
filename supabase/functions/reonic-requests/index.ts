@@ -165,7 +165,7 @@ Deno.serve(async (req) => {
     }
     const partner = db(await server.from("sales_partners").select("reonic_user_id,active,reonic_present")
       .eq("id",assignment.partner_id).single());
-    if (!partner.active || !partner.reonic_present || !partner.reonic_user_id) {
+    if (!partner.reonic_present || !partner.reonic_user_id) {
       throw Error("Der reservierte Berater ist in Reonic nicht mehr verfügbar.");
     }
     if (project.keyAccountManagerId && project.keyAccountManagerId !== partner.reonic_user_id) {
