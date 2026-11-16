@@ -38,6 +38,7 @@ Deno.serve(async (req) => {
         method: payload ? "POST" : "GET", body: payload ? JSON.stringify(payload) : undefined,
         redirect: "error", signal: AbortSignal.timeout(15000),
       });
+      if (result.status === 429) throw new ReonicLimit(Math.max(1,Number(result.headers.get("Retry-After")) || 60));
       if (!result.ok) throw Error("Reonic meldet HTTP " + result.status + " für " + path.split(/[/?]/)[0] + ".");
       return result.json();
     };
@@ -55,7 +56,7 @@ Deno.serve(async (req) => {
       }
     }
     if (!columns.size || columns.size > 50) throw Error("Die überwachten Anfragen-Spalten konnten nicht gelesen werden.");
-    const query = new URLSearchParams({stage:"request",kanbanColumnIds:[...columns.keys()].join(","),itemsPerPage:"8",page:String(page)});
+    const query = new URLSearchParams({stage:"request",kanbanColumnIds:[...columns.keys()].join(","),itemsPerPage:"4",page:String(page)});
     const projects = await api("residentialProjects?" + query);
     if (!Array.isArray(projects.data) || !projects.pagination) throw Error("Reonic lieferte keine vollständige Seite mit Anfragen.");
     const rows = await Promise.all(projects.data.map(async (project: Project) => {
@@ -66,30 +67,41 @@ Deno.serve(async (req) => {
       };
       try {
         const parent = new URLSearchParams({parentType:"residentialProject",parentId:project.id,itemsPerPage:"200"});
-        const [notes,activities,assigned] = await Promise.all([
+        const [notesResult,activitiesResult,assignedResult] = await Promise.allSettled([
           api("notes?" + parent + "&sort=-createdAt"),
           api("activities/manual?" + parent),
           client.from("leads").select("lead_assignments(reonic_synced_at,sales_partners(reonic_user_id))")
             .eq("reonic_project_id",project.id).maybeSingle(),
         ]);
-        if (assigned.error || !Array.isArray(notes.data) || !Array.isArray(activities.data)) throw Error("Verlauf unvollständig.");
+        for (const result of [notesResult,activitiesResult]) {
+          if (result.status === "rejected" && result.reason instanceof ReonicLimit) throw result.reason;
+        }
+        const notes = notesResult.status === "fulfilled" ? notesResult.value : null;
+        const activities = activitiesResult.status === "fulfilled" ? activitiesResult.value : null;
+        const assigned = assignedResult.status === "fulfilled" ? assignedResult.value : null;
+        const hasNotes = Array.isArray(notes?.data);
+        const hasActivities = Array.isArray(activities?.data);
+        const missing = [!hasNotes && "Notizen", !hasActivities && "Aktivitäten"].filter(Boolean);
+        if (!hasNotes && !hasActivities) return {...base,unavailable:true,missing,events:[]};
         const events = [
-          ...notes.data.map((entry: Entry) => ({at:entry.createdAt,kind:"Notiz",call:/^(?:ne|nicht erreicht)\b|\banruf(?:versuch)?\b|\bangerufen\b/i.test(entry.text?.trim() || ""), reached:false})),
-          ...activities.data.map((entry: Entry) => ({at:entry.createdAt,kind:entry.type === "call" ? "Anruf" : "Termin", call:entry.type === "call",reached:entry.type === "call" && ["connectedSuccessfulDiscussion","connectedNeedsFollowup"].includes(entry.outcome || "")})),
+          ...(hasNotes ? notes.data : []).map((entry: Entry) => ({at:entry.createdAt,kind:"Notiz",call:/^(?:ne|nicht erreicht)\b|\banruf(?:versuch)?\b|\bangerufen\b/i.test(entry.text?.trim() || ""), reached:false})),
+          ...(hasActivities ? activities.data : []).map((entry: Entry) => ({at:entry.createdAt,kind:entry.type === "call" ? "Anruf" : "Termin", call:entry.type === "call",reached:entry.type === "call" && ["connectedSuccessfulDiscussion","connectedNeedsFollowup"].includes(entry.outcome || "")})),
         ].filter(entry => Number.isFinite(Date.parse(entry.at))).sort((a,b) => b.at.localeCompare(a.at));
-        const stored = assigned.data?.lead_assignments;
+        const stored = assigned?.data?.lead_assignments;
         const assignment = Array.isArray(stored) ? stored[0] : stored;
         const seller = assignment?.sales_partners;
         const owner = Array.isArray(seller) ? seller[0] : seller;
         const assignedAt = base.owner && owner?.reonic_user_id === base.owner ? assignment?.reonic_synced_at : null;
         return {...base,assignedAt,createdAt:project.requestCreatedAt || project.projectCreatedAt,
-          complete:!notes.pagination?.next && !activities.pagination?.next,events};
-      } catch {
+          complete:hasNotes && hasActivities && !notes.pagination?.next && !activities.pagination?.next,missing,events};
+      } catch (error) {
+        if (error instanceof ReonicLimit) throw error;
         return {...base,unavailable:true,events:[]};
       }
     }));
     return reply({rows,next:Boolean(projects.pagination.next),columns:[...new Set(columns.values())]});
   } catch (error) {
+    if (error instanceof ReonicLimit) return reply({retryAfter:error.seconds});
     return reply({error:error instanceof Error ? error.message : "Reonic-Abruf fehlgeschlagen."},502);
   }
 });
@@ -97,3 +109,7 @@ Deno.serve(async (req) => {
 type Project = {id:string; name?:string; customerContact?:{fullName?:string}; kanbanColumnId:string;
   keyAccountManagerId?:string; requestCreatedAt?:string; projectCreatedAt?:string};
 type Entry = {createdAt:string; text?:string; type?:string; outcome?:string};
+
+class ReonicLimit extends Error {
+  constructor(public seconds: number) { super("Reonic-Abruflimit erreicht."); }
+}
