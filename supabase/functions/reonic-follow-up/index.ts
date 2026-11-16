@@ -84,9 +84,9 @@ Deno.serve(async (req) => {
         const missing = [!hasNotes && "Notizen", !hasActivities && "Aktivitäten"].filter(Boolean);
         if (!hasNotes && !hasActivities) return {...base,unavailable:true,missing,events:[]};
         const events = [
-          ...(hasNotes ? notes.data : []).map((entry: Entry) => ({at:entry.createdAt,kind:"Notiz",call:/^(?:ne|nicht erreicht)\b|\banruf(?:versuch)?\b|\bangerufen\b/i.test(entry.text?.trim() || ""), reached:false})),
+          ...(hasNotes ? notes.data : []).map((entry: Entry) => ({at:entry.createdAt,kind:"Notiz",call:/^(?:ne|nicht erreicht)\b|\banruf(?:versuch)?\b|\bangerufen\b/i.test(String(entry.text ?? "").trim()), reached:false})),
           ...(hasActivities ? activities.data : []).map((entry: Entry) => ({at:entry.createdAt,kind:entry.type === "call" ? "Anruf" : "Termin", call:entry.type === "call",reached:entry.type === "call" && ["connectedSuccessfulDiscussion","connectedNeedsFollowup"].includes(entry.outcome || "")})),
-        ].filter(entry => Number.isFinite(Date.parse(entry.at))).sort((a,b) => b.at.localeCompare(a.at));
+        ].filter(entry => Number.isFinite(Date.parse(entry.at))).sort((a,b) => Date.parse(b.at)-Date.parse(a.at));
         const stored = assigned?.data?.lead_assignments;
         const assignment = Array.isArray(stored) ? stored[0] : stored;
         const seller = assignment?.sales_partners;
@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
           complete:hasNotes && hasActivities && !notes.pagination?.next && !activities.pagination?.next,missing,events};
       } catch (error) {
         if (error instanceof ReonicLimit) throw error;
-        return {...base,unavailable:true,events:[]};
+        return {...base,unavailable:true,missing:[error instanceof Error ? error.message : "Verlaufsdaten"],events:[]};
       }
     }));
     return reply({rows,next:Boolean(projects.pagination.next),columns:[...new Set(columns.values())]});
